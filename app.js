@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 1.6.0
+// Version: 1.7.0
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 
 // Global state
 let originalImage = null;
@@ -108,49 +108,70 @@ function toggleGrid(e) {
 function drawGrid() {
     if (!currentImageData) return;
     
-    // Create grid canvas for original
-    if (!gridCanvas) {
-        gridCanvas = document.createElement('canvas');
+    // Clear existing grids
+    clearGrid();
+    
+    // Create grid overlays for both canvases
+    const canvases = [elements.originalCanvas, elements.quantizedCanvas];
+    
+    canvases.forEach((canvas, index) => {
+        const gridCanvas = document.createElement('canvas');
         gridCanvas.className = 'grid-overlay';
         gridCanvas.style.pointerEvents = 'none';
-        elements.originalCanvas.parentElement.appendChild(gridCanvas);
-    }
-    
-    // Set size and position
-    gridCanvas.width = elements.originalCanvas.width;
-    gridCanvas.height = elements.originalCanvas.height;
-    gridCanvas.style.width = elements.originalCanvas.style.width;
-    gridCanvas.style.height = elements.originalCanvas.style.height;
-    gridCanvas.style.position = 'absolute';
-    gridCanvas.style.left = elements.originalCanvas.offsetLeft + 'px';
-    gridCanvas.style.top = elements.originalCanvas.offsetTop + 'px';
-    
-    const ctx = gridCanvas.getContext('2d');
-    ctx.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-    ctx.lineWidth = 1;
-    
-    // Draw grid lines (every 10 pixels = 10 yarn lines)
-    const gridSize = 10;
-    for (let x = 0; x <= gridCanvas.width; x += gridSize) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, gridCanvas.height);
-        ctx.stroke();
-    }
-    for (let y = 0; y <= gridCanvas.height; y += gridSize) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(gridCanvas.width, y);
-        ctx.stroke();
-    }
+        gridCanvas.style.position = 'absolute';
+        gridCanvas.style.zIndex = '100';
+        
+        // Set size to match the canvas
+        gridCanvas.width = canvas.width;
+        gridCanvas.height = canvas.height;
+        gridCanvas.style.width = canvas.offsetWidth + 'px';
+        gridCanvas.style.height = canvas.offsetHeight + 'px';
+        gridCanvas.style.left = canvas.offsetLeft + 'px';
+        gridCanvas.style.top = canvas.offsetTop + 'px';
+        
+        // Add to parent
+        canvas.parentElement.appendChild(gridCanvas);
+        
+        const ctx = gridCanvas.getContext('2d');
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.lineWidth = 1;
+        
+        // Grid size based on resolution
+        // For 58 lines/cm: grid every 58 pixels (1cm)
+        // For 116 lines/cm: grid every 116 pixels (1cm)
+        const gridSize = currentResolution;
+        
+        // Draw vertical lines
+        for (let x = 0; x <= gridCanvas.width; x += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, gridCanvas.height);
+            ctx.stroke();
+        }
+        
+        // Draw horizontal lines
+        for (let y = 0; y <= gridCanvas.height; y += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(gridCanvas.width, y);
+            ctx.stroke();
+        }
+        
+        // Store reference for cleanup
+        if (!window.gridCanvases) window.gridCanvases = [];
+        window.gridCanvases.push(gridCanvas);
+    });
 }
 
 // Clear grid overlay
 function clearGrid() {
-    if (gridCanvas && gridCanvas.parentElement) {
-        gridCanvas.parentElement.removeChild(gridCanvas);
-        gridCanvas = null;
+    if (window.gridCanvases) {
+        window.gridCanvases.forEach(canvas => {
+            if (canvas && canvas.parentElement) {
+                canvas.parentElement.removeChild(canvas);
+            }
+        });
+        window.gridCanvases = [];
     }
 }
 
@@ -226,39 +247,20 @@ function drawMagnifier(canvasX, canvasY) {
     magnifierCtx.imageSmoothingEnabled = false;
     magnifierCtx.clearRect(0, 0, 300, 300);
     
-    // Create clipping regions for half circles
-    magnifierCtx.save();
-    
-    // Left half circle - original
-    magnifierCtx.beginPath();
-    magnifierCtx.arc(150, 150, 148, Math.PI * 0.5, Math.PI * 1.5);
-    magnifierCtx.closePath();
-    magnifierCtx.clip();
-    
-    magnifierCtx.drawImage(
-        elements.originalCanvas,
-        canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-        0, 0, 300, 300
-    );
-    
-    // Draw red dot for cursor position (left half)
-    magnifierCtx.fillStyle = 'red';
-    magnifierCtx.fillRect(148, 148, 4, 4);
-    
-    magnifierCtx.restore();
-    
-    // Right half circle - pixel
+    // Draw from both canvases side by side in magnifier
     if (quantizedResult) {
-        magnifierCtx.save();
-        magnifierCtx.beginPath();
-        magnifierCtx.arc(150, 150, 148, Math.PI * 1.5, Math.PI * 0.5);
-        magnifierCtx.closePath();
-        magnifierCtx.clip();
+        // Left half - original
+        magnifierCtx.drawImage(
+            elements.originalCanvas,
+            canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
+            0, 0, 150, 300
+        );
         
+        // Right half - pixel
         magnifierCtx.drawImage(
             elements.quantizedCanvas,
             canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-            0, 0, 300, 300
+            150, 0, 150, 300
         );
         
         // If there's a highlight overlay, also show it
@@ -267,39 +269,45 @@ function drawMagnifier(canvasX, canvasY) {
             magnifierCtx.drawImage(
                 highlightCanvas,
                 canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-                0, 0, 300, 300
+                150, 0, 150, 300
             );
             magnifierCtx.globalAlpha = 1;
         }
         
-        // Draw red dot for cursor position (right half)
+        // Draw red dot for cursor position in center of both halves
+        magnifierCtx.fillStyle = 'red';
+        magnifierCtx.fillRect(73, 148, 4, 4); // Left half center
+        magnifierCtx.fillRect(223, 148, 4, 4); // Right half center
+        
+        // Draw divider line
+        magnifierCtx.strokeStyle = '#333';
+        magnifierCtx.lineWidth = 2;
+        magnifierCtx.beginPath();
+        magnifierCtx.moveTo(150, 0);
+        magnifierCtx.lineTo(150, 300);
+        magnifierCtx.stroke();
+        
+        // Add labels with better positioning
+        magnifierCtx.fillStyle = 'white';
+        magnifierCtx.strokeStyle = 'black';
+        magnifierCtx.lineWidth = 4;
+        magnifierCtx.font = 'bold 14px Arial';
+        magnifierCtx.strokeText('Original', 40, 25);
+        magnifierCtx.fillText('Original', 40, 25);
+        magnifierCtx.strokeText('Pixel', 190, 25);
+        magnifierCtx.fillText('Pixel', 190, 25);
+    } else {
+        // Just show original if no quantized version yet
+        magnifierCtx.drawImage(
+            elements.originalCanvas,
+            canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
+            0, 0, 300, 300
+        );
+        
+        // Draw red dot for cursor position
         magnifierCtx.fillStyle = 'red';
         magnifierCtx.fillRect(148, 148, 4, 4);
-        
-        magnifierCtx.restore();
     }
-    
-    // Draw divider line
-    magnifierCtx.strokeStyle = '#333';
-    magnifierCtx.lineWidth = 2;
-    magnifierCtx.beginPath();
-    magnifierCtx.moveTo(150, 0);
-    magnifierCtx.lineTo(150, 300);
-    magnifierCtx.stroke();
-    
-    // Add labels with better positioning
-    magnifierCtx.fillStyle = 'white';
-    magnifierCtx.strokeStyle = 'black';
-    magnifierCtx.lineWidth = 4;
-    magnifierCtx.font = 'bold 14px Arial';
-    
-    // Original label - positioned to be visible
-    magnifierCtx.strokeText('Original', 50, 25);
-    magnifierCtx.fillText('Original', 50, 25);
-    
-    // Pixel label - positioned to be visible
-    magnifierCtx.strokeText('Pixel', 200, 25);
-    magnifierCtx.fillText('Pixel', 200, 25);
 }
 
 // Drag and Drop handlers
