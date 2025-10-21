@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Broadloom Image Converter - v1.6.0</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Broadloom Image to Yarn Converter</h1>
+            <div class="version">Version: 1.6.0</div>
+        </header>
+
+        <div class="main-content">
+            <!-- Left Panel - Images -->
+            <div class="images-panel">
+                <!-- Drag and Drop Area -->
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-zone-content">
+                        <svg class="upload-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <h3>Drag & Drop Image Here</h3>
+                        <p>or</p>
+                        <label for="image-upload" class="browse-button">
+                            Browse Files
+                            <input type="file" id="image-upload" accept="image/*" hidden>
+                        </label>
+                        <p class="file-info">Supports: JPG, PNG, GIF, BMP</p>
+                    </div>
+                </div>
+                
+                <!-- Image Display Area -->
+                <div id="image-display" class="image-display" style="display: none;">
+                    <div class="image-container">
+                        <div class="image-box">
+                            <h3>Original</h3>
+                            <canvas id="original-canvas" class="image-canvas"></canvas>
+                        </div>
+                        <div class="image-box">
+                            <h3>Pixel</h3>
+                            <canvas id="quantized-canvas" class="image-canvas"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- Magnifying Lens -->
+                    <div id="magnifier" class="magnifier" style="display: none;">
+                        <canvas id="magnifier-canvas"></canvas>
+                    </div>
+                    
+                    <!-- Crosshairs -->
+                    <div id="crosshair-horizontal" class="crosshair crosshair-horizontal" style="display: none;"></div>
+                    <div id="crosshair-vertical" class="crosshair crosshair-vertical" style="display: none;"></div>
+                </div>
+            </div>
+
+            <!-- Right Panel - Controls -->
+            <div class="controls-panel">
+
+                <div class="control-section">
+                    <label class="section-title">Resolution:</label>
+                    <div class="resolution-options">
+                        <label class="radio-option">
+                            <input type="radio" name="resolution" value="58" checked>
+                            <span class="radio-label">58 yarn lines/cm (Standard)</span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="resolution" value="116">
+                            <span class="radio-label">116 yarn lines/cm (High Detail)</span>
+                        </label>
+                    </div>
+                    <div id="resolution-recommendation" class="recommendation"></div>
+                    <label class="checkbox-option">
+                        <input type="checkbox" id="show-grid" name="show-grid">
+                        <span class="checkbox-label">Show Grid</span>
+                    </label>
+                </div>
+
+                <div class="control-section">
+                    <label class="section-title">Number of Colors (K):</label>
+                    <div class="k-controls">
+                        <button id="k-minus" class="k-button">−</button>
+                        <div class="k-display">
+                            <span id="k-value">10</span>
+                            <span class="k-label">colors</span>
+                        </div>
+                        <button id="k-plus" class="k-button">+</button>
+                    </div>
+                    <div class="k-range">Min: 2 | Max: 16</div>
+                </div>
+
+                <div class="control-section action-buttons">
+                    <button id="convert-btn" class="primary-button" disabled>Convert Image</button>
+                    <button id="download-btn" class="secondary-button" disabled>Download Yarn Map</button>
+                </div>
+
+                <!-- Image Information -->
+                <div id="image-info" class="control-section info-panel"></div>
+                
+                <!-- Color Palette -->
+                <div id="color-palette" class="control-section color-palette">
+                    <div class="palette-header">
+                        <h4>Color Palette</h4>
+                        <div class="sort-buttons">
+                            <button id="sort-brightness" class="sort-btn active" title="Sort by brightness">☀️ %</button>
+                            <button id="sort-pixels" class="sort-btn" title="Sort by pixel count">📊 %</button>
+                        </div>
+                    </div>
+                    <div id="palette-rows" class="palette-rows"></div>
+                </div>
+                
+                <!-- Color Reduction Analysis -->
+                <div id="k-info" class="control-section k-info-panel" style="display: none;">
+                    <h3 class="section-title">Color Reduction Analysis (K = <span id="current-k">10</span>)</h3>
+                    <div class="pros-cons-container">
+                        <div class="pros-section">
+                            <h4>✅ Advantages</h4>
+                            <ul id="pros-list"></ul>
+                        </div>
+                        <div class="cons-section">
+                            <h4>⚠️ Considerations</h4>
+                            <ul id="cons-list"></ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Processing Status -->
+        <div id="processing-overlay" class="overlay" style="display: none;">
+            <div class="spinner"></div>
+            <div class="processing-text">Processing image...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="kmeans.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
