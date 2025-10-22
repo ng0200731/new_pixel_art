@@ -104,8 +104,14 @@ function initializeCentroidsKMeansPlusPlus(pixels, k) {
     return centroids;
 }
 
+// Store previous centroids for stability
+let previousCentroids = null;
+let previousK = null;
+let previousMedoids = null;
+let previousKMedoids = null;
+
 // Main K-means clustering function
-function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null) {
+function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null, useStable = true) {
     if (pixels.length === 0 || k <= 0) {
         return { centroids: [], assignments: [], iterations: 0, error: 0 };
     }
@@ -114,8 +120,26 @@ function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null) {
     const uniqueColors = new Set(pixels.map(p => p.join(',')));
     k = Math.min(k, uniqueColors.size);
     
-    // Initialize centroids using k-means++
-    let centroids = initializeCentroidsKMeansPlusPlus(pixels, k);
+    // Initialize centroids
+    let centroids;
+    
+    // Use stable initialization if we're increasing K and have previous results
+    if (useStable && previousCentroids && previousK && k > previousK) {
+        // Keep existing centroids and add new ones
+        centroids = [...previousCentroids];
+        
+        // Add additional centroids using k-means++ for the remaining slots
+        const additionalK = k - previousK;
+        const additionalCentroids = initializeAdditionalCentroids(pixels, centroids, additionalK);
+        centroids = centroids.concat(additionalCentroids);
+    } else if (useStable && previousCentroids && previousK && k < previousK) {
+        // When reducing K, keep the most important centroids
+        centroids = selectBestCentroids(pixels, previousCentroids, k);
+    } else {
+        // Standard initialization
+        centroids = initializeCentroidsKMeansPlusPlus(pixels, k);
+    }
+    
     let assignments = new Array(pixels.length);
     let prevError = Infinity;
     let iterations = 0;
@@ -168,12 +192,360 @@ function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null) {
         }
     }
     
+    // Store results for next time
+    previousCentroids = centroids;
+    previousK = k;
+    
     return {
         centroids: centroids,
         assignments: assignments,
         iterations: iterations,
         error: prevError / pixels.length
     };
+}
+
+// Initialize additional centroids when increasing K
+function initializeAdditionalCentroids(pixels, existingCentroids, additionalK) {
+    const newCentroids = [];
+    
+    // First, find which cluster has the most pixels (largest region)
+    const clusterSizes = new Array(existingCentroids.length).fill(0);
+    const clusterPixels = existingCentroids.map(() => []);
+    
+    // Assign each pixel to its nearest centroid and count
+    for (const pixel of pixels) {
+        const { index } = findClosestCentroid(pixel, existingCentroids);
+        clusterSizes[index]++;
+        clusterPixels[index].push(pixel);
+    }
+    
+    // For each new centroid to add
+    for (let i = 0; i < additionalK; i++) {
+        // Find the largest cluster (most pixels)
+        let largestClusterIdx = 0;
+        let maxSize = 0;
+        
+        for (let j = 0; j < clusterSizes.length; j++) {
+            if (clusterSizes[j] > maxSize) {
+                maxSize = clusterSizes[j];
+                largestClusterIdx = j;
+            }
+        }
+        
+        // Split the largest cluster
+        const largestCluster = clusterPixels[largestClusterIdx];
+        if (largestCluster.length > 0) {
+            // Find the pixel in this cluster that's farthest from its centroid
+            let maxDist = 0;
+            let bestPixel = null;
+            
+            for (const pixel of largestCluster) {
+                const dist = colorDistance(pixel, existingCentroids[largestClusterIdx]);
+                if (dist > maxDist) {
+                    maxDist = dist;
+                    bestPixel = [...pixel];
+                }
+            }
+            
+            if (bestPixel) {
+                newCentroids.push(bestPixel);
+                // Add the new centroid to existing ones for next iteration
+                existingCentroids.push(bestPixel);
+                
+                // Recalculate cluster assignments for the split cluster
+                const newClusterPixels = [];
+                const remainingPixels = [];
+                
+                for (const pixel of largestCluster) {
+                    const distToOld = colorDistance(pixel, existingCentroids[largestClusterIdx]);
+                    const distToNew = colorDistance(pixel, bestPixel);
+                    
+                    if (distToNew < distToOld) {
+                        newClusterPixels.push(pixel);
+                    } else {
+                        remainingPixels.push(pixel);
+                    }
+                }
+                
+                // Update cluster data
+                clusterPixels[largestClusterIdx] = remainingPixels;
+                clusterPixels.push(newClusterPixels);
+                clusterSizes[largestClusterIdx] = remainingPixels.length;
+                clusterSizes.push(newClusterPixels.length);
+            }
+        }
+    }
+    
+    return newCentroids;
+}
+
+// Select best centroids when reducing K
+function selectBestCentroids(pixels, centroids, k) {
+    // Count pixels assigned to each centroid
+    const centroidData = centroids.map((centroid, i) => ({
+        centroid: centroid,
+        index: i,
+        count: 0,
+        pixels: []
+    }));
+    
+    // Assign pixels and count
+    for (const pixel of pixels) {
+        const { index } = findClosestCentroid(pixel, centroids);
+        centroidData[index].count++;
+        centroidData[index].pixels.push(pixel);
+    }
+    
+    // Sort by count (largest first)
+    centroidData.sort((a, b) => b.count - a.count);
+    
+    // Keep the k largest clusters
+    const keptCentroids = centroidData.slice(0, k).map(d => d.centroid);
+    
+    // For removed clusters, merge their pixels into the nearest kept cluster
+    const removedClusters = centroidData.slice(k);
+    
+    for (const removed of removedClusters) {
+        if (removed.pixels.length > 0) {
+            // Find which kept centroid is closest to this removed centroid
+            const { index } = findClosestCentroid(removed.centroid, keptCentroids);
+            
+            // The pixels from the removed cluster will naturally be reassigned
+            // to the nearest kept centroid during the next K-means iteration
+        }
+    }
+    
+    return keptCentroids;
+}
+
+// Reset previous centroids (call when loading new image)
+function resetPreviousCentroids() {
+    previousCentroids = null;
+    previousK = null;
+    previousMedoids = null;
+    previousKMedoids = null;
+}
+
+// K-medoids clustering - only uses actual colors from the image
+function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useStable = true) {
+    if (pixels.length === 0 || k <= 0) {
+        return { centroids: [], assignments: [], iterations: 0, error: 0 };
+    }
+    
+    // Get unique colors and their counts
+    const colorMap = new Map();
+    for (const pixel of pixels) {
+        const key = pixel.join(',');
+        colorMap.set(key, (colorMap.get(key) || 0) + 1);
+    }
+    
+    // Convert to array of unique colors with their frequencies
+    const uniqueColors = Array.from(colorMap.entries()).map(([key, count]) => ({
+        color: key.split(',').map(Number),
+        count: count,
+        key: key
+    }));
+    
+    // Ensure k doesn't exceed number of unique colors
+    k = Math.min(k, uniqueColors.length);
+    
+    // Initialize medoids
+    let medoids;
+    
+    if (useStable && previousMedoids && previousKMedoids && k > previousKMedoids) {
+        // Keep existing medoids and add new ones
+        medoids = [...previousMedoids];
+        const additionalK = k - previousKMedoids;
+        const additionalMedoids = initializeAdditionalMedoids(uniqueColors, medoids, additionalK);
+        medoids = medoids.concat(additionalMedoids);
+    } else if (useStable && previousMedoids && previousKMedoids && k < previousKMedoids) {
+        // Keep most important medoids
+        medoids = selectBestMedoids(uniqueColors, previousMedoids, k);
+    } else {
+        // Initialize using k-medoids++ (similar to k-means++)
+        medoids = initializeMedoidsPlusPlus(uniqueColors, k);
+    }
+    
+    let assignments = new Array(pixels.length);
+    let prevError = Infinity;
+    let iterations = 0;
+    
+    // Main iteration loop
+    for (let iter = 0; iter < maxIterations; iter++) {
+        iterations = iter + 1;
+        
+        // Assignment step
+        let totalError = 0;
+        for (let i = 0; i < pixels.length; i++) {
+            const { index, distance } = findClosestCentroid(pixels[i], medoids);
+            assignments[i] = index;
+            totalError += distance;
+        }
+        
+        // Check convergence
+        const errorDiff = Math.abs(prevError - totalError);
+        if (errorDiff < 0.001) {
+            break;
+        }
+        prevError = totalError;
+        
+        // Update step: find better medoids from actual colors
+        for (let j = 0; j < k; j++) {
+            // Get all pixels assigned to this medoid
+            const clusterColors = [];
+            for (let i = 0; i < pixels.length; i++) {
+                if (assignments[i] === j) {
+                    clusterColors.push(pixels[i]);
+                }
+            }
+            
+            if (clusterColors.length > 0) {
+                // Find the actual color that minimizes distance to all cluster members
+                let bestMedoid = medoids[j];
+                let bestCost = Infinity;
+                
+                // Try each unique color in the cluster as potential medoid
+                const uniqueClusterColors = new Set(clusterColors.map(c => c.join(',')));
+                for (const colorKey of uniqueClusterColors) {
+                    const candidateColor = colorKey.split(',').map(Number);
+                    let cost = 0;
+                    
+                    for (const clusterColor of clusterColors) {
+                        cost += colorDistance(candidateColor, clusterColor);
+                    }
+                    
+                    if (cost < bestCost) {
+                        bestCost = cost;
+                        bestMedoid = candidateColor;
+                    }
+                }
+                
+                medoids[j] = bestMedoid;
+            }
+        }
+        
+        if (onProgress) {
+            onProgress(iter / maxIterations);
+        }
+    }
+    
+    // Store for stability
+    previousMedoids = medoids;
+    previousKMedoids = k;
+    
+    return {
+        centroids: medoids,
+        assignments: assignments,
+        iterations: iterations,
+        error: prevError / pixels.length,
+        isActualColors: true
+    };
+}
+
+// Initialize medoids using k-medoids++
+function initializeMedoidsPlusPlus(uniqueColors, k) {
+    const medoids = [];
+    
+    // Pick first medoid - choose the color with highest frequency
+    let maxCount = 0;
+    let firstMedoid = uniqueColors[0].color;
+    for (const uc of uniqueColors) {
+        if (uc.count > maxCount) {
+            maxCount = uc.count;
+            firstMedoid = uc.color;
+        }
+    }
+    medoids.push([...firstMedoid]);
+    
+    // Pick remaining medoids
+    for (let i = 1; i < k; i++) {
+        let maxMinDist = 0;
+        let bestColor = null;
+        
+        // Find color that's farthest from existing medoids
+        for (const uc of uniqueColors) {
+            let minDist = Infinity;
+            for (const medoid of medoids) {
+                const dist = colorDistance(uc.color, medoid);
+                if (dist < minDist) {
+                    minDist = dist;
+                }
+            }
+            
+            // Weight by frequency - prefer common colors
+            const weightedDist = minDist * Math.sqrt(uc.count);
+            if (weightedDist > maxMinDist) {
+                maxMinDist = weightedDist;
+                bestColor = uc.color;
+            }
+        }
+        
+        if (bestColor) {
+            medoids.push([...bestColor]);
+        }
+    }
+    
+    return medoids;
+}
+
+// Initialize additional medoids when increasing K
+function initializeAdditionalMedoids(uniqueColors, existingMedoids, additionalK) {
+    const newMedoids = [];
+    
+    for (let i = 0; i < additionalK; i++) {
+        let maxMinDist = 0;
+        let bestColor = null;
+        
+        // Find actual color that's farthest from existing medoids
+        for (const uc of uniqueColors) {
+            let minDist = Infinity;
+            for (const medoid of existingMedoids.concat(newMedoids)) {
+                const dist = colorDistance(uc.color, medoid);
+                if (dist < minDist) {
+                    minDist = dist;
+                }
+            }
+            
+            // Weight by frequency
+            const weightedDist = minDist * Math.sqrt(uc.count);
+            if (weightedDist > maxMinDist) {
+                maxMinDist = weightedDist;
+                bestColor = uc.color;
+            }
+        }
+        
+        if (bestColor) {
+            newMedoids.push([...bestColor]);
+        }
+    }
+    
+    return newMedoids;
+}
+
+// Select best medoids when reducing K
+function selectBestMedoids(uniqueColors, medoids, k) {
+    // Create a frequency map for medoids
+    const medoidFreq = new Map();
+    
+    for (const medoid of medoids) {
+        const key = medoid.join(',');
+        let freq = 0;
+        for (const uc of uniqueColors) {
+            if (uc.key === key) {
+                freq = uc.count;
+                break;
+            }
+        }
+        medoidFreq.set(key, { medoid: medoid, freq: freq });
+    }
+    
+    // Sort by frequency and keep top k
+    const sorted = Array.from(medoidFreq.values())
+        .sort((a, b) => b.freq - a.freq)
+        .slice(0, k)
+        .map(item => item.medoid);
+    
+    return sorted;
 }
 
 // Apply quantized colors to image data
@@ -197,12 +569,21 @@ function applyQuantization(imageData, centroids, assignments) {
 }
 
 // Quantize image using all pixels for final mapping
-function quantizeImage(imageData, k, sampleRate = 10, onProgress = null) {
+function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStable = true, useActualColors = true) {
     // Sample pixels for clustering
     const sampledPixels = samplePixels(imageData, sampleRate);
     
-    // Run k-means on sampled pixels
-    const { centroids } = kmeansQuantize(sampledPixels, k, 20, onProgress);
+    // Choose algorithm: K-medoids (actual colors) or K-means (average colors)
+    let result;
+    if (useActualColors) {
+        // Use K-medoids to ensure only actual colors are selected
+        result = kmedoidsQuantize(sampledPixels, k, 20, onProgress, useStable);
+    } else {
+        // Use traditional K-means (may create average colors)
+        result = kmeansQuantize(sampledPixels, k, 20, onProgress, useStable);
+    }
+    
+    const { centroids } = result;
     
     // Map all pixels to nearest centroid
     const allPixels = extractAllPixels(imageData);
@@ -216,7 +597,8 @@ function quantizeImage(imageData, k, sampleRate = 10, onProgress = null) {
     return {
         quantizedData: quantizedData,
         centroids: centroids,
-        assignments: assignments
+        assignments: assignments,
+        isActualColors: result.isActualColors || false
     };
 }
 

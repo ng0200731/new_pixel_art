@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 1.7.0
+// Version: 2.1.0
 
-const VERSION = '1.7.0';
+const VERSION = '2.1.0';
 
 // Global state
 let originalImage = null;
@@ -27,6 +27,7 @@ const elements = {
     resolutionInputs: document.querySelectorAll('input[name="resolution"]'),
     resolutionRecommendation: document.getElementById('resolution-recommendation'),
     showGridCheckbox: document.getElementById('show-grid'),
+    useActualColorsCheckbox: document.getElementById('use-actual-colors'),
     kMinus: document.getElementById('k-minus'),
     kPlus: document.getElementById('k-plus'),
     kValue: document.getElementById('k-value'),
@@ -72,6 +73,13 @@ function initializeEventListeners() {
     
     // Grid toggle
     elements.showGridCheckbox?.addEventListener('change', toggleGrid);
+    
+    // Actual colors toggle - auto convert when changed
+    elements.useActualColorsCheckbox?.addEventListener('change', () => {
+        if (originalImage && currentImageData) {
+            convertImage();
+        }
+    });
     
     // K value controls
     elements.kMinus.addEventListener('click', () => adjustK(-1));
@@ -215,14 +223,31 @@ function handleCanvasHover(e) {
     const canvasX = x * scaleX;
     const canvasY = y * scaleY;
     
-    // Show magnifier (offset to not block cursor)
+    // Show magnifier with smart positioning
     if (magnifierActive) {
         elements.magnifier.style.display = 'block';
-        elements.magnifier.style.left = `${e.clientX}px`;
-        elements.magnifier.style.top = `${e.clientY}px`;
+        
+        // Calculate magnifier position to avoid going off screen
+        const magnifierSize = 300;
+        const offset = 20;
+        let magnifierX = e.clientX + offset;
+        let magnifierY = e.clientY + offset;
+        
+        // Adjust if magnifier would go off right edge
+        if (magnifierX + magnifierSize > window.innerWidth) {
+            magnifierX = e.clientX - magnifierSize - offset;
+        }
+        
+        // Adjust if magnifier would go off bottom edge
+        if (magnifierY + magnifierSize > window.innerHeight) {
+            magnifierY = e.clientY - magnifierSize - offset;
+        }
+        
+        elements.magnifier.style.left = `${magnifierX}px`;
+        elements.magnifier.style.top = `${magnifierY}px`;
         
         // Draw magnified area
-        drawMagnifier(canvasX, canvasY);
+        drawMagnifier(canvasX, canvasY, canvas);
     }
 }
 
@@ -234,8 +259,8 @@ function handleCanvasLeave() {
     elements.crosshairV.style.display = 'none';
 }
 
-// Draw magnifier content with red dot cursor
-function drawMagnifier(canvasX, canvasY) {
+// Draw magnifier content with red dot cursor and color info
+function drawMagnifier(canvasX, canvasY, sourceCanvas) {
     const magnifierCtx = elements.magnifierCanvas.getContext('2d');
     const magnification = 4;
     const sourceSize = 75; // Size of area to magnify
@@ -246,6 +271,32 @@ function drawMagnifier(canvasX, canvasY) {
     // Draw magnified portion
     magnifierCtx.imageSmoothingEnabled = false;
     magnifierCtx.clearRect(0, 0, 300, 300);
+    
+    // Get color at cursor position
+    const pixelX = Math.floor(canvasX);
+    const pixelY = Math.floor(canvasY);
+    let originalColor = null;
+    let pixelColor = null;
+    
+    // Get original color
+    if (currentImageData && pixelX >= 0 && pixelX < currentImageData.width && 
+        pixelY >= 0 && pixelY < currentImageData.height) {
+        const idx = (pixelY * currentImageData.width + pixelX) * 4;
+        originalColor = [
+            currentImageData.data[idx],
+            currentImageData.data[idx + 1],
+            currentImageData.data[idx + 2]
+        ];
+    }
+    
+    // Get quantized color
+    if (quantizedResult && quantizedResult.assignments) {
+        const pixelIndex = pixelY * currentImageData.width + pixelX;
+        if (pixelIndex >= 0 && pixelIndex < quantizedResult.assignments.length) {
+            const colorIndex = quantizedResult.assignments[pixelIndex];
+            pixelColor = quantizedResult.centroids[colorIndex];
+        }
+    }
     
     // Draw from both canvases side by side in magnifier
     if (quantizedResult) {
@@ -287,15 +338,24 @@ function drawMagnifier(canvasX, canvasY) {
         magnifierCtx.lineTo(150, 300);
         magnifierCtx.stroke();
         
-        // Add labels with better positioning
-        magnifierCtx.fillStyle = 'white';
-        magnifierCtx.strokeStyle = 'black';
-        magnifierCtx.lineWidth = 4;
-        magnifierCtx.font = 'bold 14px Arial';
-        magnifierCtx.strokeText('Original', 40, 25);
-        magnifierCtx.fillText('Original', 40, 25);
-        magnifierCtx.strokeText('Pixel', 190, 25);
-        magnifierCtx.fillText('Pixel', 190, 25);
+        // Display color hex codes at bottom
+        if (originalColor || pixelColor) {
+            magnifierCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            magnifierCtx.fillRect(0, 270, 300, 30);
+            
+            magnifierCtx.fillStyle = 'white';
+            magnifierCtx.font = 'bold 12px monospace';
+            
+            if (originalColor) {
+                const hexOriginal = rgbToHex(originalColor);
+                magnifierCtx.fillText(hexOriginal, 35, 290);
+            }
+            
+            if (pixelColor) {
+                const hexPixel = rgbToHex(pixelColor);
+                magnifierCtx.fillText(hexPixel, 185, 290);
+            }
+        }
     } else {
         // Just show original if no quantized version yet
         magnifierCtx.drawImage(
@@ -307,6 +367,17 @@ function drawMagnifier(canvasX, canvasY) {
         // Draw red dot for cursor position
         magnifierCtx.fillStyle = 'red';
         magnifierCtx.fillRect(148, 148, 4, 4);
+        
+        // Display color hex code at bottom
+        if (originalColor) {
+            magnifierCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            magnifierCtx.fillRect(0, 270, 300, 30);
+            
+            magnifierCtx.fillStyle = 'white';
+            magnifierCtx.font = 'bold 12px monospace';
+            const hexOriginal = rgbToHex(originalColor);
+            magnifierCtx.fillText(hexOriginal, 120, 290);
+        }
     }
 }
 
@@ -352,6 +423,11 @@ function processImageFile(file) {
     reader.onload = function(e) {
         originalImage = new Image();
         originalImage.onload = function() {
+            // Reset K-means centroids for new image
+            if (typeof resetPreviousCentroids === 'function') {
+                resetPreviousCentroids();
+            }
+            
             // Hide drop zone, show image display
             elements.dropZone.style.display = 'none';
             elements.imageDisplay.style.display = 'block';
@@ -376,8 +452,17 @@ function processImageFile(file) {
             // Show K info
             updateKInfo();
             
+            // Show placeholder on quantized canvas
+            const qCtx = elements.quantizedCanvas.getContext('2d');
+            qCtx.fillStyle = '#f0f0f0';
+            qCtx.fillRect(0, 0, elements.quantizedCanvas.width, elements.quantizedCanvas.height);
+            qCtx.fillStyle = '#999';
+            qCtx.font = '20px Arial';
+            qCtx.textAlign = 'center';
+            qCtx.fillText('Processing...', elements.quantizedCanvas.width / 2, elements.quantizedCanvas.height / 2);
+            
             // Auto-convert with default settings
-            convertImage();
+            setTimeout(() => convertImage(), 200);
         };
         originalImage.src = e.target.result;
     };
@@ -555,27 +640,34 @@ function updateImageInfo() {
 
 // Convert image using K-means
 async function convertImage() {
-    if (!currentImageData) return;
+    if (!currentImageData) {
+        console.error('No image data to convert');
+        return;
+    }
     
     // Show processing overlay
     showProcessing(true);
     
     // Use setTimeout to allow UI to update
     setTimeout(() => {
+        try {
         // Determine sample rate based on image size
         const totalPixels = currentImageData.width * currentImageData.height;
         let sampleRate = 1;
         if (totalPixels > 500000) sampleRate = 10;
         else if (totalPixels > 100000) sampleRate = 5;
         
-        // Run quantization
+        // Run quantization with stable mode and actual colors option
+        const useActualColors = elements.useActualColorsCheckbox ? elements.useActualColorsCheckbox.checked : true;
         quantizedResult = quantizeImage(
             currentImageData, 
             currentK, 
             sampleRate,
             (progress) => {
                 elements.progressFill.style.width = `${progress * 100}%`;
-            }
+            },
+            true, // Use stable mode
+            useActualColors // Use actual colors from image (K-medoids)
         );
         
         // Display quantized image
@@ -601,6 +693,18 @@ async function convertImage() {
         
         // Hide processing overlay
         showProcessing(false);
+        
+        console.log('Conversion complete:', {
+            k: currentK,
+            centroids: quantizedResult.centroids.length,
+            isActualColors: quantizedResult.isActualColors
+        });
+        
+        } catch (error) {
+            console.error('Error during conversion:', error);
+            showProcessing(false);
+            alert('Error converting image: ' + error.message);
+        }
     }, 100);
 }
 

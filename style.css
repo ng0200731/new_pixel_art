@@ -1,4 +1,4 @@
-/* Version: 1.7.0 */
+/* Version: 2.1.0 */
 :root {
     --primary-color: #2563eb;
     --secondary-color: #64748b;
@@ -192,7 +192,6 @@ header h1 {
     overflow: hidden;
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
     background: white;
-    transform: translate(20px, 20px); /* Offset to not block cursor */
 }
 
 #magnifier-canvas {
