@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.16
+// Version: 2.9.19
 
-const VERSION = '2.9.16';
+const VERSION = '2.9.19';
 
 // Global state
 let originalImage = null;
@@ -363,49 +363,20 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
     
     // Draw only the pixel image in the magnifier (no split)
     if (quantizedResult) {
+        const srcX = canvasX - sourceSize / 2;
+        const srcY = canvasY - sourceSize / 2;
         magnifierCtx.drawImage(
             elements.quantizedCanvas,
-            canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
+            srcX, srcY, sourceSize, sourceSize,
             0, 0, magnifierSize, magnifierSize
         );
         
-        // In magnifier: overlay yellow-highlighted pixels (if highlight is active)
+        // In magnifier: overlay yellow-highlighted pixels using the same source window
         if (highlightCanvas && highlightedColorIndex >= 0) {
-            // Create a temporary canvas to extract only yellow pixels
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = sourceSize;
-            tempCanvas.height = sourceSize;
-            const tempCtx = tempCanvas.getContext('2d');
-            
-            // Draw the highlight overlay for the region
-            tempCtx.drawImage(
-                highlightCanvas,
-                canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-                0, 0, sourceSize, sourceSize
-            );
-            
-            // Use the highlight alpha as a mask and paint pure yellow where mask exists
-            const maskData = tempCtx.getImageData(0, 0, sourceSize, sourceSize);
-            const out = tempCtx.createImageData(sourceSize, sourceSize);
-            for (let i = 0; i < maskData.data.length; i += 4) {
-                const a = maskData.data[i + 3];
-                if (a > 0) {
-                    out.data[i] = 255;       // R (yellow)
-                    out.data[i + 1] = 255;   // G (yellow)
-                    out.data[i + 2] = 0;     // B (yellow)
-                    out.data[i + 3] = 255;   // A opaque
-                } else {
-                    out.data[i] = 0;
-                    out.data[i + 1] = 0;
-                    out.data[i + 2] = 0;
-                    out.data[i + 3] = 0;     // transparent where no highlight
-                }
-            }
-            tempCtx.putImageData(out, 0, 0);
-            // Overlay on top of the full magnifier area
+            magnifierCtx.imageSmoothingEnabled = false;
             magnifierCtx.drawImage(
-                tempCanvas,
-                0, 0, sourceSize, sourceSize,
+                highlightCanvas,
+                srcX, srcY, sourceSize, sourceSize,
                 0, 0, magnifierSize, magnifierSize
             );
         }
@@ -956,17 +927,22 @@ function highlightColorPixels(colorIndex) {
         quantizedBox.appendChild(highlightCanvas);
     }
     
-    // Set canvas size to match quantized canvas exactly
+    // Set canvas size to match quantized canvas exactly (device pixels)
     highlightCanvas.width = elements.quantizedCanvas.width;
     highlightCanvas.height = elements.quantizedCanvas.height;
-    
-    // Position the overlay exactly on top of the quantized canvas
-    highlightCanvas.style.left = `${elements.quantizedCanvas.offsetLeft}px`;
-    highlightCanvas.style.top = `${elements.quantizedCanvas.offsetTop}px`;
-    highlightCanvas.style.width = `${elements.quantizedCanvas.offsetWidth}px`;
-    highlightCanvas.style.height = `${elements.quantizedCanvas.offsetHeight}px`;
+
+    // Position the overlay using precise client rects to avoid subpixel drift
+    const parentRect = elements.quantizedCanvas.parentElement.getBoundingClientRect();
+    const canvasRect = elements.quantizedCanvas.getBoundingClientRect();
+    const left = canvasRect.left - parentRect.left;
+    const top = canvasRect.top - parentRect.top;
+    highlightCanvas.style.left = `${left}px`;
+    highlightCanvas.style.top = `${top}px`;
+    highlightCanvas.style.width = `${canvasRect.width}px`;
+    highlightCanvas.style.height = `${canvasRect.height}px`;
     
     const ctx = highlightCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
     
     // Create image data for highlight

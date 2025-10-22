@@ -1,4 +1,4 @@
-/* Version: 2.9.16 */
+/* Version: 2.9.19 */
 :root {
     --primary-color: #2563eb;
     --secondary-color: #64748b;
@@ -615,6 +615,9 @@ header h1 {
     left: 0;
     pointer-events: none;
     z-index: 100;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: -webkit-optimize-contrast;
 }
 
 .processing-text {
