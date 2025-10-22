@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.12
+// Version: 2.9.13
 
-const VERSION = '2.9.12';
+const VERSION = '2.9.13';
 
 // Global state
 let originalImage = null;
@@ -342,22 +342,12 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
         }
     }
     
-    // Draw from both canvases side by side in magnifier
+    // Draw only the pixel image in the magnifier (no split)
     if (quantizedResult) {
-        const halfSize = magnifierSize / 2;
-        
-        // Left half - original
-        magnifierCtx.drawImage(
-            elements.originalCanvas,
-            canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-            0, 0, halfSize, magnifierSize
-        );
-        
-        // Right half - pixel
         magnifierCtx.drawImage(
             elements.quantizedCanvas,
             canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-            halfSize, 0, halfSize, magnifierSize
+            0, 0, magnifierSize, magnifierSize
         );
         
         // In magnifier: overlay yellow-highlighted pixels (if highlight is active)
@@ -393,11 +383,11 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
                 }
             }
             tempCtx.putImageData(out, 0, 0);
-            // Overlay on top of the right half
+            // Overlay on top of the full magnifier area
             magnifierCtx.drawImage(
                 tempCanvas,
                 0, 0, sourceSize, sourceSize,
-                halfSize, 0, halfSize, magnifierSize
+                0, 0, magnifierSize, magnifierSize
             );
         }
         
@@ -434,38 +424,21 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
             magnifierCtx.strokeRect(2, 2, magnifierSize - 4, magnifierSize - 4);
         }
         
-        // Draw red dot for cursor position in center of both halves
+        // Draw red dot for cursor position at lens center
         magnifierCtx.fillStyle = 'red';
-        const centerY = magnifierSize / 2;
-        magnifierCtx.fillRect(halfSize/2 - 2, centerY - 2, 4, 4); // Left half center
-        magnifierCtx.fillRect(halfSize + halfSize/2 - 2, centerY - 2, 4, 4); // Right half center
+        const center = magnifierSize / 2;
+        magnifierCtx.fillRect(center - 2, center - 2, 4, 4);
         
-        // Draw divider line
-        magnifierCtx.strokeStyle = '#333';
-        magnifierCtx.lineWidth = 3;
-        magnifierCtx.beginPath();
-        magnifierCtx.moveTo(halfSize, 0);
-        magnifierCtx.lineTo(halfSize, magnifierSize);
-        magnifierCtx.stroke();
-        
-        // Display color hex codes at bottom
-        if (originalColor || pixelColor) {
+        // Display color hex code at bottom (pixel only)
+        if (pixelColor) {
             const textBoxHeight = 35;
             magnifierCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             magnifierCtx.fillRect(0, magnifierSize - textBoxHeight, magnifierSize, textBoxHeight);
             
             magnifierCtx.fillStyle = 'white';
             magnifierCtx.font = 'bold 12px monospace';
-            
-            if (originalColor) {
-                const hexOriginal = rgbToHex(originalColor);
-                magnifierCtx.fillText(hexOriginal, halfSize/2 - 30, magnifierSize - 10);
-            }
-            
-            if (pixelColor) {
-                const hexPixel = rgbToHex(pixelColor);
-                magnifierCtx.fillText(hexPixel, halfSize + halfSize/2 - 30, magnifierSize - 10);
-            }
+            const hexPixel = rgbToHex(pixelColor);
+            magnifierCtx.fillText(hexPixel, 10, magnifierSize - 10);
         }
     } else {
         // Just show original if no quantized version yet
