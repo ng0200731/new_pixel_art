@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.1.0
+// Version: 2.4.0
 
-const VERSION = '2.1.0';
+const VERSION = '2.4.0';
 
 // Global state
 let originalImage = null;
@@ -141,24 +141,46 @@ function drawGrid() {
         canvas.parentElement.appendChild(gridCanvas);
         
         const ctx = gridCanvas.getContext('2d');
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+        
+        console.log(`Drawing grid for resolution ${currentResolution}: ${gridCanvas.width}x${gridCanvas.height} pixels (${gridCanvas.width} vertical lines, ${gridCanvas.height} horizontal lines)`);
+        
+        // Draw individual yarn lines (every 1 pixel = 1 yarn line)
+        // Lighter color for individual lines
+        ctx.strokeStyle = 'rgba(200, 200, 200, 0.3)';
         ctx.lineWidth = 1;
         
-        // Grid size based on resolution
-        // For 58 lines/cm: grid every 58 pixels (1cm)
-        // For 116 lines/cm: grid every 116 pixels (1cm)
-        const gridSize = currentResolution;
-        
-        // Draw vertical lines
-        for (let x = 0; x <= gridCanvas.width; x += gridSize) {
+        // Draw every single yarn line (1 line per pixel)
+        // 58 lines/cm = 580 lines for 10cm
+        // 116 lines/cm = 1160 lines for 10cm
+        for (let x = 0; x <= gridCanvas.width; x++) {
             ctx.beginPath();
             ctx.moveTo(x, 0);
             ctx.lineTo(x, gridCanvas.height);
             ctx.stroke();
         }
         
-        // Draw horizontal lines
-        for (let y = 0; y <= gridCanvas.height; y += gridSize) {
+        for (let y = 0; y <= gridCanvas.height; y++) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(gridCanvas.width, y);
+            ctx.stroke();
+        }
+        
+        // Draw 1cm boundary lines (thicker and red)
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
+        ctx.lineWidth = 2;
+        const cmGridSize = currentResolution; // pixels per 1cm
+        
+        // Draw 1cm vertical boundaries
+        for (let x = 0; x <= gridCanvas.width; x += cmGridSize) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, gridCanvas.height);
+            ctx.stroke();
+        }
+        
+        // Draw 1cm horizontal boundaries
+        for (let y = 0; y <= gridCanvas.height; y += cmGridSize) {
             ctx.beginPath();
             ctx.moveTo(0, y);
             ctx.lineTo(gridCanvas.width, y);
@@ -262,15 +284,19 @@ function handleCanvasLeave() {
 // Draw magnifier content with red dot cursor and color info
 function drawMagnifier(canvasX, canvasY, sourceCanvas) {
     const magnifierCtx = elements.magnifierCanvas.getContext('2d');
-    const magnification = 4;
-    const sourceSize = 75; // Size of area to magnify
     
-    elements.magnifierCanvas.width = 300;
-    elements.magnifierCanvas.height = 300;
+    // Source size = 1cm = currentResolution pixels
+    // This captures exactly one 1cm x 1cm square
+    const sourceSize = currentResolution; 
+    
+    // Magnifier canvas size = 400x400 to show detail
+    const magnifierSize = 400;
+    elements.magnifierCanvas.width = magnifierSize;
+    elements.magnifierCanvas.height = magnifierSize;
     
     // Draw magnified portion
     magnifierCtx.imageSmoothingEnabled = false;
-    magnifierCtx.clearRect(0, 0, 300, 300);
+    magnifierCtx.clearRect(0, 0, magnifierSize, magnifierSize);
     
     // Get color at cursor position
     const pixelX = Math.floor(canvasX);
@@ -300,18 +326,20 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
     
     // Draw from both canvases side by side in magnifier
     if (quantizedResult) {
+        const halfSize = magnifierSize / 2;
+        
         // Left half - original
         magnifierCtx.drawImage(
             elements.originalCanvas,
             canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-            0, 0, 150, 300
+            0, 0, halfSize, magnifierSize
         );
         
         // Right half - pixel
         magnifierCtx.drawImage(
             elements.quantizedCanvas,
             canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-            150, 0, 150, 300
+            halfSize, 0, halfSize, magnifierSize
         );
         
         // If there's a highlight overlay, also show it
@@ -320,40 +348,75 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
             magnifierCtx.drawImage(
                 highlightCanvas,
                 canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-                150, 0, 150, 300
+                halfSize, 0, halfSize, magnifierSize
             );
             magnifierCtx.globalAlpha = 1;
         }
         
+        // Draw grid overlay in magnifier if grid is enabled
+        if (showGrid) {
+            console.log(`Drawing magnifier grid: sourceSize=${sourceSize}, magnifierSize=${magnifierSize}, pixelsPerYarnLine=${magnifierSize / sourceSize}`);
+            
+            // Draw individual yarn lines (darker for visibility)
+            magnifierCtx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
+            magnifierCtx.lineWidth = 1;
+            
+            // Calculate pixels per yarn line in magnifier
+            // sourceSize pixels fit into magnifierSize pixels
+            const pixelsPerYarnLine = magnifierSize / sourceSize;
+            
+            // Draw grid lines for each yarn line
+            for (let x = 0; x <= magnifierSize; x += pixelsPerYarnLine) {
+                magnifierCtx.beginPath();
+                magnifierCtx.moveTo(x, 0);
+                magnifierCtx.lineTo(x, magnifierSize);
+                magnifierCtx.stroke();
+            }
+            
+            for (let y = 0; y <= magnifierSize; y += pixelsPerYarnLine) {
+                magnifierCtx.beginPath();
+                magnifierCtx.moveTo(0, y);
+                magnifierCtx.lineTo(magnifierSize, y);
+                magnifierCtx.stroke();
+            }
+            
+            // Draw red border around the entire 1cm square
+            magnifierCtx.strokeStyle = 'rgba(255, 0, 0, 0.9)';
+            magnifierCtx.lineWidth = 5;
+            magnifierCtx.strokeRect(2, 2, magnifierSize - 4, magnifierSize - 4);
+        }
+        
         // Draw red dot for cursor position in center of both halves
         magnifierCtx.fillStyle = 'red';
-        magnifierCtx.fillRect(73, 148, 4, 4); // Left half center
-        magnifierCtx.fillRect(223, 148, 4, 4); // Right half center
+        const centerY = magnifierSize / 2;
+        magnifierCtx.fillRect(halfSize/2 - 2, centerY - 2, 4, 4); // Left half center
+        magnifierCtx.fillRect(halfSize + halfSize/2 - 2, centerY - 2, 4, 4); // Right half center
         
         // Draw divider line
         magnifierCtx.strokeStyle = '#333';
-        magnifierCtx.lineWidth = 2;
+        magnifierCtx.lineWidth = 3;
         magnifierCtx.beginPath();
-        magnifierCtx.moveTo(150, 0);
-        magnifierCtx.lineTo(150, 300);
+        magnifierCtx.moveTo(halfSize, 0);
+        magnifierCtx.lineTo(halfSize, magnifierSize);
         magnifierCtx.stroke();
         
         // Display color hex codes at bottom
         if (originalColor || pixelColor) {
+            const textBoxHeight = 35;
             magnifierCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            magnifierCtx.fillRect(0, 270, 300, 30);
+            magnifierCtx.fillRect(0, magnifierSize - textBoxHeight, magnifierSize, textBoxHeight);
             
             magnifierCtx.fillStyle = 'white';
             magnifierCtx.font = 'bold 12px monospace';
             
             if (originalColor) {
                 const hexOriginal = rgbToHex(originalColor);
-                magnifierCtx.fillText(hexOriginal, 35, 290);
+                magnifierCtx.fillText(hexOriginal, halfSize/2 - 30, magnifierSize - 10);
             }
             
             if (pixelColor) {
                 const hexPixel = rgbToHex(pixelColor);
-                magnifierCtx.fillText(hexPixel, 185, 290);
+                magnifierCtx.fillText(hexPixel, halfSize + halfSize/2 - 30, magnifierSize - 10);
             }
         }
     } else {
@@ -361,22 +424,24 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
         magnifierCtx.drawImage(
             elements.originalCanvas,
             canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
-            0, 0, 300, 300
+            0, 0, magnifierSize, magnifierSize
         );
         
         // Draw red dot for cursor position
         magnifierCtx.fillStyle = 'red';
-        magnifierCtx.fillRect(148, 148, 4, 4);
+        const center = magnifierSize / 2;
+        magnifierCtx.fillRect(center - 2, center - 2, 4, 4);
         
         // Display color hex code at bottom
         if (originalColor) {
+            const textBoxHeight = 35;
             magnifierCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            magnifierCtx.fillRect(0, 270, 300, 30);
+            magnifierCtx.fillRect(0, magnifierSize - textBoxHeight, magnifierSize, textBoxHeight);
             
             magnifierCtx.fillStyle = 'white';
             magnifierCtx.font = 'bold 12px monospace';
             const hexOriginal = rgbToHex(originalColor);
-            magnifierCtx.fillText(hexOriginal, 120, 290);
+            magnifierCtx.fillText(hexOriginal, magnifierSize/2 - 30, magnifierSize - 10);
         }
     }
 }
