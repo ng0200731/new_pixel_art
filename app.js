@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.4.0
+// Version: 2.9.10
 
-const VERSION = '2.4.0';
+const VERSION = '2.9.10';
 
 // Global state
 let originalImage = null;
@@ -14,6 +14,8 @@ const DESIGN_HEIGHT = 10; // Fixed 10cm
 let magnifierActive = false;
 let highlightedColorIndex = -1;
 let highlightCanvas = null;
+let highlightLocked = false; // Whether highlight is locked by click
+let lockedColorIndex = null; // Which color is locked
 let currentSort = 'brightness'; // 'brightness' or 'pixels'
 let colorData = null; // Store color data for sorting
 let showGrid = false;
@@ -100,6 +102,23 @@ function initializeEventListeners() {
     elements.quantizedCanvas.addEventListener('mouseenter', () => magnifierActive = true);
     elements.originalCanvas.addEventListener('mouseleave', handleCanvasLeave);
     elements.quantizedCanvas.addEventListener('mouseleave', handleCanvasLeave);
+    
+    // Shift key to toggle highlight on/off
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Shift') {
+            highlightLocked = !highlightLocked;
+            if (!highlightLocked) {
+                // Unlock: clear highlight
+                lockedColorIndex = null;
+                clearHighlight();
+                // Remove active class from all rows
+                document.querySelectorAll('.color-row').forEach(row => row.classList.remove('active'));
+            } else if (lockedColorIndex !== null) {
+                // Re-lock: restore previous highlight
+                highlightColorPixels(lockedColorIndex);
+            }
+        }
+    });
 }
 
 // Toggle grid overlay
@@ -342,15 +361,45 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
             halfSize, 0, halfSize, magnifierSize
         );
         
-        // If there's a highlight overlay, also show it
+        // In magnifier: overlay yellow-highlighted pixels (if highlight is active)
         if (highlightCanvas && highlightedColorIndex >= 0) {
-            magnifierCtx.globalAlpha = 1; // Solid yellow
-            magnifierCtx.drawImage(
+            // Create a temporary canvas to extract only yellow pixels
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = sourceSize;
+            tempCanvas.height = sourceSize;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Draw the highlight overlay for the region
+            tempCtx.drawImage(
                 highlightCanvas,
                 canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
+                0, 0, sourceSize, sourceSize
+            );
+            
+            // Use the highlight alpha as a mask and paint pure yellow where mask exists
+            const maskData = tempCtx.getImageData(0, 0, sourceSize, sourceSize);
+            const out = tempCtx.createImageData(sourceSize, sourceSize);
+            for (let i = 0; i < maskData.data.length; i += 4) {
+                const a = maskData.data[i + 3];
+                if (a > 0) {
+                    out.data[i] = 255;       // R (yellow)
+                    out.data[i + 1] = 255;   // G (yellow)
+                    out.data[i + 2] = 0;     // B (yellow)
+                    out.data[i + 3] = 255;   // A opaque
+                } else {
+                    out.data[i] = 0;
+                    out.data[i + 1] = 0;
+                    out.data[i + 2] = 0;
+                    out.data[i + 3] = 0;     // transparent where no highlight
+                }
+            }
+            tempCtx.putImageData(out, 0, 0);
+            // Overlay on top of the right half
+            magnifierCtx.drawImage(
+                tempCanvas,
+                0, 0, sourceSize, sourceSize,
                 halfSize, 0, halfSize, magnifierSize
             );
-            magnifierCtx.globalAlpha = 1;
         }
         
         // Draw grid overlay in magnifier if grid is enabled
@@ -818,14 +867,34 @@ function displayColorPalette(colors, stats, originalIndices) {
         row.appendChild(swatch);
         row.appendChild(info);
         
-        // Add hover events
+        // Add hover and click events
         row.addEventListener('mouseenter', () => {
-            row.classList.add('active');
-            highlightColorPixels(item.originalIndex);
+            if (!highlightLocked) {
+                row.classList.add('active');
+                highlightColorPixels(item.originalIndex);
+            }
         });
         row.addEventListener('mouseleave', () => {
-            row.classList.remove('active');
-            clearHighlight();
+            if (!highlightLocked) {
+                row.classList.remove('active');
+                clearHighlight();
+            }
+        });
+        // Click to lock/unlock highlight
+        row.addEventListener('click', () => {
+            if (highlightLocked && lockedColorIndex === item.originalIndex) {
+                // Clicking the same color unlocks it
+                highlightLocked = false;
+                lockedColorIndex = null;
+                row.classList.remove('active');
+                clearHighlight();
+            } else {
+                // Lock highlight to this color
+                highlightLocked = true;
+                lockedColorIndex = item.originalIndex;
+                row.classList.add('active');
+                highlightColorPixels(item.originalIndex);
+            }
         });
         
         elements.paletteRows.appendChild(row);

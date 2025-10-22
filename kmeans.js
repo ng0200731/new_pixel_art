@@ -1,12 +1,19 @@
 // K-means clustering algorithm for color quantization
-// Version: 1.0.0
+// Version: 2.9.10
 
-// Helper: Calculate Euclidean distance between two colors in RGB space
+// Helper: Calculate weighted perceptual distance (prevents black→red merging)
 function colorDistance(c1, c2) {
     const dr = c1[0] - c2[0];
     const dg = c1[1] - c2[1];
     const db = c1[2] - c2[2];
-    return Math.sqrt(dr * dr + dg * dg + db * db);
+    
+    // Perceptual weights based on human color sensitivity
+    // Green is weighted highest because humans are most sensitive to green
+    const weightR = 0.30;
+    const weightG = 0.59;
+    const weightB = 0.11;
+    
+    return Math.sqrt(weightR * dr * dr + weightG * dg * dg + weightB * db * db);
 }
 
 // Helper: Find the closest centroid for a given color
@@ -25,27 +32,147 @@ function findClosestCentroid(color, centroids) {
     return { index: closestIdx, distance: minDist };
 }
 
+// Keep last quantization state to support stable K reduction without losing pixels
+let lastQuantization = {
+    pixels: null,           // Array<[r,g,b]> for all pixels
+    assignments: null,      // Array<number> cluster index per pixel
+    centroids: null,        // Array<[r,g,b]>
+    k: 0
+};
+
+// Merge clusters to reduce palette to targetK by reassigning pixels to nearest remaining color
+function mergePaletteToK(pixels, assignments, centroids, targetK) {
+    let currentAssignments = assignments.slice();
+    let currentCentroids = centroids.map(c => [c[0], c[1], c[2]]);
+    
+    const totalPixels = assignments.length;
+
+    while (currentCentroids.length > targetK) {
+        // Count pixels per cluster BEFORE merge
+        const counts = new Array(currentCentroids.length).fill(0);
+        for (let i = 0; i < currentAssignments.length; i++) {
+            const a = currentAssignments[i];
+            if (a >= 0 && a < counts.length) counts[a]++;
+        }
+
+        // Find smallest cluster index s
+        let s = 0; let minCount = Infinity;
+        for (let i = 0; i < counts.length; i++) {
+            if (counts[i] < minCount) { minCount = counts[i]; s = i; }
+        }
+
+        // Find nearest centroid to s (t)
+        let t = -1; let minDist = Infinity;
+        for (let j = 0; j < currentCentroids.length; j++) {
+            if (j === s) continue;
+            const d = colorDistance(currentCentroids[s], currentCentroids[j]);
+            if (d < minDist) { minDist = d; t = j; }
+        }
+        
+        const pixelsBeforeMerge_s = counts[s];
+        const pixelsBeforeMerge_t = counts[t];
+
+        // Reassign ALL pixels from s to t (no pixels removed, only reassigned)
+        for (let i = 0; i < currentAssignments.length; i++) {
+            if (currentAssignments[i] === s) currentAssignments[i] = t;
+            else if (currentAssignments[i] > s) currentAssignments[i] -= 1;
+        }
+
+        // Remove centroid s from palette
+        currentCentroids.splice(s, 1);
+        
+        // Verify: count pixels after merge
+        const countsAfter = new Array(currentCentroids.length).fill(0);
+        for (let i = 0; i < currentAssignments.length; i++) {
+            const a = currentAssignments[i];
+            if (a >= 0 && a < countsAfter.length) countsAfter[a]++;
+        }
+        
+        // Target t index may have shifted if t > s
+        const newT = (t > s) ? t - 1 : t;
+        const pixelsAfterMerge = countsAfter[newT];
+        const expectedPixels = pixelsBeforeMerge_s + pixelsBeforeMerge_t;
+        
+        // Verify pixel conservation: merged color should have sum of both
+        if (pixelsAfterMerge !== expectedPixels) {
+            console.error(`[ERROR] Pixel count mismatch! Expected ${expectedPixels}, got ${pixelsAfterMerge}`);
+        }
+
+        // Recompute centroids as means of assigned pixels (keeps colors stable)
+        const sums = currentCentroids.map(() => [0, 0, 0]);
+        const cts = new Array(currentCentroids.length).fill(0);
+        for (let i = 0; i < pixels.length; i++) {
+            const a = currentAssignments[i];
+            if (a >= 0 && a < currentCentroids.length) {
+                sums[a][0] += pixels[i][0];
+                sums[a][1] += pixels[i][1];
+                sums[a][2] += pixels[i][2];
+                cts[a]++;
+            }
+        }
+        for (let i = 0; i < currentCentroids.length; i++) {
+            if (cts[i] > 0) {
+                currentCentroids[i] = [
+                    Math.round(sums[i][0] / cts[i]),
+                    Math.round(sums[i][1] / cts[i]),
+                    Math.round(sums[i][2] / cts[i])
+                ];
+            }
+        }
+    }
+    
+    // Final verification: total pixels must equal input
+    let finalCount = 0;
+    for (let i = 0; i < currentAssignments.length; i++) {
+        if (currentAssignments[i] >= 0 && currentAssignments[i] < currentCentroids.length) {
+            finalCount++;
+        }
+    }
+    if (finalCount !== totalPixels) {
+        console.error(`[ERROR] Lost pixels during merge! Started with ${totalPixels}, ended with ${finalCount}`);
+    }
+
+    return { centroids: currentCentroids, assignments: currentAssignments };
+}
+
 // Helper: Sample pixels from image data to speed up processing
 function samplePixels(imageData, sampleRate = 10) {
-    const pixels = [];
     const data = imageData.data;
     const totalPixels = data.length / 4; // RGBA format
     
     // If image is small, use all pixels
     if (totalPixels < 10000) {
-        sampleRate = 1;
+        const pixels = [];
+        for (let i = 0; i < totalPixels; i++) {
+            const idx = i * 4;
+            pixels.push([data[idx], data[idx + 1], data[idx + 2]]);
+        }
+        return pixels;
     }
     
+    // For large images: collect all unique colors first to ensure rare colors are included
+    const uniqueColors = new Map();
+    const sampledPixels = [];
+    
+    // First pass: collect all unique colors (ensures gray stripes aren't missed)
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        const key = `${r},${g},${b}`;
+        if (!uniqueColors.has(key)) {
+            uniqueColors.set(key, [r, g, b]);
+        }
+    }
+    
+    // Add all unique colors to sample
+    uniqueColors.forEach(color => sampledPixels.push(color));
+    
+    // Add additional sampled pixels for better distribution
     for (let i = 0; i < totalPixels; i += sampleRate) {
         const idx = i * 4;
-        pixels.push([
-            data[idx],     // R
-            data[idx + 1], // G
-            data[idx + 2]  // B
-        ]);
+        sampledPixels.push([data[idx], data[idx + 1], data[idx + 2]]);
     }
     
-    return pixels;
+    return sampledPixels;
 }
 
 // Extract all pixels from image data
@@ -332,6 +459,12 @@ function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useS
         return { centroids: [], assignments: [], iterations: 0, error: 0 };
     }
     
+    // Safety check: if too many pixels, fall back to K-means
+    if (pixels.length > 100000) {
+        console.warn('Too many pixels for K-medoids, falling back to K-means');
+        return kmeansQuantize(pixels, k, maxIterations, onProgress, useStable);
+    }
+    
     // Get unique colors and their counts
     const colorMap = new Map();
     for (const pixel of pixels) {
@@ -348,6 +481,12 @@ function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useS
     
     // Ensure k doesn't exceed number of unique colors
     k = Math.min(k, uniqueColors.length);
+    
+    // Safety: Limit unique colors to prevent stack overflow
+    if (uniqueColors.length > 10000) {
+        console.warn('Too many unique colors, using K-means instead');
+        return kmeansQuantize(pixels, k, maxIterations, onProgress, useStable);
+    }
     
     // Initialize medoids
     let medoids;
@@ -551,18 +690,28 @@ function selectBestMedoids(uniqueColors, medoids, k) {
 // Apply quantized colors to image data
 function applyQuantization(imageData, centroids, assignments) {
     const quantizedData = new ImageData(imageData.width, imageData.height);
-    const srcData = imageData.data;
     const dstData = quantizedData.data;
     
+    // Simple logic: every pixel gets replaced with its nearest color
+    // No pixels are removed, only replaced
     for (let i = 0; i < assignments.length; i++) {
         const pixelIdx = i * 4;
         const cluster = assignments[i];
-        const centroid = centroids[cluster];
         
+        // Get the color from the palette (with fallback to first color if invalid)
+        let centroid;
+        if (cluster >= 0 && cluster < centroids.length && centroids[cluster]) {
+            centroid = centroids[cluster];
+        } else {
+            // Fallback to first color if assignment is invalid
+            centroid = centroids[0] || [0, 0, 0];
+        }
+        
+        // Replace pixel with palette color (always fully opaque)
         dstData[pixelIdx] = centroid[0];     // R
         dstData[pixelIdx + 1] = centroid[1]; // G
         dstData[pixelIdx + 2] = centroid[2]; // B
-        dstData[pixelIdx + 3] = srcData[pixelIdx + 3]; // Alpha
+        dstData[pixelIdx + 3] = 255;          // A - always solid, never transparent
     }
     
     return quantizedData;
@@ -576,22 +725,29 @@ function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStab
     // Choose algorithm: K-medoids (actual colors) or K-means (average colors)
     let result;
     if (useActualColors) {
-        // Use K-medoids to ensure only actual colors are selected
         result = kmedoidsQuantize(sampledPixels, k, 20, onProgress, useStable);
     } else {
-        // Use traditional K-means (may create average colors)
         result = kmeansQuantize(sampledPixels, k, 20, onProgress, useStable);
     }
     
-    const { centroids } = result;
+    let centroids = result.centroids;
     
     // Map all pixels to nearest centroid
     const allPixels = extractAllPixels(imageData);
-    const assignments = allPixels.map(pixel => 
-        findClosestCentroid(pixel, centroids).index
-    );
+    let assignments = allPixels.map(pixel => findClosestCentroid(pixel, centroids).index);
     
-    // Apply quantization
+    // Persist last state to support stable reduction
+    lastQuantization = { pixels: allPixels, assignments: assignments, centroids: centroids, k: centroids.length };
+    
+    // If the returned number of centroids is larger than target k because of stability,
+    // merge palette to exactly k WITHOUT losing any pixels
+    if (centroids.length > k) {
+        const merged = mergePaletteToK(allPixels, assignments, centroids, k);
+        centroids = merged.centroids;
+        assignments = merged.assignments;
+    }
+    
+    // Apply quantization (no pixel removal; all pixels assigned)
     const quantizedData = applyQuantization(imageData, centroids, assignments);
     
     return {

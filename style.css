@@ -1,4 +1,4 @@
-/* Version: 2.4.0 */
+/* Version: 2.9.10 */
 :root {
     --primary-color: #2563eb;
     --secondary-color: #64748b;
@@ -188,7 +188,7 @@ header h1 {
     border: 3px solid var(--primary-color);
     border-radius: 50%;
     pointer-events: none;
-    z-index: 1000;
+    z-index: 3000; /* raised above highlight */
     overflow: hidden;
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
     background: white;
