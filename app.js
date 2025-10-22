@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.10
+// Version: 2.9.12
 
-const VERSION = '2.9.10';
+const VERSION = '2.9.12';
 
 // Global state
 let originalImage = null;
@@ -103,19 +103,18 @@ function initializeEventListeners() {
     elements.originalCanvas.addEventListener('mouseleave', handleCanvasLeave);
     elements.quantizedCanvas.addEventListener('mouseleave', handleCanvasLeave);
     
-    // Shift key to toggle highlight on/off
+    // Shift key to toggle highlight on/off (preserve selected color)
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Shift') {
             highlightLocked = !highlightLocked;
-            if (!highlightLocked) {
-                // Unlock: clear highlight
-                lockedColorIndex = null;
+            if (highlightLocked) {
+                // Toggle ON: restore previous selection if available
+                if (lockedColorIndex !== null) {
+                    highlightColorPixels(lockedColorIndex);
+                }
+            } else {
+                // Toggle OFF: just hide overlay, keep lockedColorIndex
                 clearHighlight();
-                // Remove active class from all rows
-                document.querySelectorAll('.color-row').forEach(row => row.classList.remove('active'));
-            } else if (lockedColorIndex !== null) {
-                // Re-lock: restore previous highlight
-                highlightColorPixels(lockedColorIndex);
             }
         }
     });
@@ -880,18 +879,21 @@ function displayColorPalette(colors, stats, originalIndices) {
                 clearHighlight();
             }
         });
-        // Click to lock/unlock highlight
+        // Click to lock/unlock highlight; ensure only one row is active
         row.addEventListener('click', () => {
             if (highlightLocked && lockedColorIndex === item.originalIndex) {
                 // Clicking the same color unlocks it
                 highlightLocked = false;
                 lockedColorIndex = null;
-                row.classList.remove('active');
+                // Clear active state from all rows
+                document.querySelectorAll('.color-row').forEach(r => r.classList.remove('active'));
                 clearHighlight();
             } else {
                 // Lock highlight to this color
                 highlightLocked = true;
                 lockedColorIndex = item.originalIndex;
+                // Clear active state from other rows first
+                document.querySelectorAll('.color-row').forEach(r => r.classList.remove('active'));
                 row.classList.add('active');
                 highlightColorPixels(item.originalIndex);
             }
