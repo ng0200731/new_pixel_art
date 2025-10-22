@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Broadloom Image Converter - v2.9.13</title>
+    <title>Broadloom Image Converter - v2.9.16</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Broadloom Image to Yarn Converter</h1>
-            <div class="version">Version: 2.9.13</div>
+            <div class="version">Version: 2.9.16</div>
         </header>
 
         <div class="main-content">
@@ -47,9 +47,12 @@
                         </div>
                     </div>
                     
-                    <!-- Magnifying Lens -->
-                    <div id="magnifier" class="magnifier" style="display: none;">
+                    <!-- Magnifying Lenses -->
+                    <div id="magnifier" class="magnifier magnifier-pixel" style="display: none;">
                         <canvas id="magnifier-canvas"></canvas>
+                    </div>
+                    <div id="magnifier-original" class="magnifier magnifier-original" style="display: none;">
+                        <canvas id="magnifier-canvas-original"></canvas>
                     </div>
                     
                     <!-- Crosshairs -->

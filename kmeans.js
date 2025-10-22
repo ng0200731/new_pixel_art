@@ -1,5 +1,5 @@
 // K-means clustering algorithm for color quantization
-// Version: 2.9.13
+// Version: 2.9.16
 
 // Helper: Calculate weighted perceptual distance (prevents black→red merging)
 function colorDistance(c1, c2) {

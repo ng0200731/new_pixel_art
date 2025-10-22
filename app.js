@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.13
+// Version: 2.9.16
 
-const VERSION = '2.9.13';
+const VERSION = '2.9.16';
 
 // Global state
 let originalImage = null;
@@ -40,6 +40,8 @@ const elements = {
     quantizedCanvas: document.getElementById('quantized-canvas'),
     magnifier: document.getElementById('magnifier'),
     magnifierCanvas: document.getElementById('magnifier-canvas'),
+    magnifierOriginal: document.getElementById('magnifier-original'),
+    magnifierCanvasOriginal: document.getElementById('magnifier-canvas-original'),
     crosshairH: document.getElementById('crosshair-horizontal'),
     crosshairV: document.getElementById('crosshair-vertical'),
     kInfo: document.getElementById('k-info'),
@@ -266,28 +268,44 @@ function handleCanvasHover(e) {
     // Show magnifier with smart positioning
     if (magnifierActive) {
         elements.magnifier.style.display = 'block';
-        
-        // Calculate magnifier position to avoid going off screen
+        elements.magnifierOriginal.style.display = 'block';
+
+        // Position each lens NEAR the cursor (do not cover the crosshair)
         const magnifierSize = 300;
         const offset = 20;
-        let magnifierX = e.clientX + offset;
-        let magnifierY = e.clientY + offset;
-        
-        // Adjust if magnifier would go off right edge
-        if (magnifierX + magnifierSize > window.innerWidth) {
-            magnifierX = e.clientX - magnifierSize - offset;
+        const u = canvasX / canvas.width;
+        const v = canvasY / canvas.height;
+
+        const origRect = elements.originalCanvas.getBoundingClientRect();
+        const quantRect = elements.quantizedCanvas.getBoundingClientRect();
+
+        const origClientX = origRect.left + u * origRect.width;
+        const origClientY = origRect.top + v * origRect.height;
+        const quantClientX = quantRect.left + u * quantRect.width;
+        const quantClientY = quantRect.top + v * quantRect.height;
+
+        // Helper to choose side: prefer bottom-right; flip if out of bounds
+        function placeNear(clientX, clientY) {
+            let left = clientX + offset;
+            let top = clientY + offset;
+            if (left + magnifierSize > window.innerWidth) left = clientX - magnifierSize - offset;
+            if (top + magnifierSize > window.innerHeight) top = clientY - magnifierSize - offset;
+            if (left < 0) left = 0;
+            if (top < 0) top = 0;
+            return { left, top };
         }
-        
-        // Adjust if magnifier would go off bottom edge
-        if (magnifierY + magnifierSize > window.innerHeight) {
-            magnifierY = e.clientY - magnifierSize - offset;
-        }
-        
-        elements.magnifier.style.left = `${magnifierX}px`;
-        elements.magnifier.style.top = `${magnifierY}px`;
-        
-        // Draw magnified area
+
+        const posOrig = placeNear(origClientX, origClientY);
+        const posQuant = placeNear(quantClientX, quantClientY);
+
+        elements.magnifierOriginal.style.left = `${posOrig.left}px`;
+        elements.magnifierOriginal.style.top = `${posOrig.top}px`;
+        elements.magnifier.style.left = `${posQuant.left}px`;
+        elements.magnifier.style.top = `${posQuant.top}px`;
+
+        // Draw magnified areas
         drawMagnifier(canvasX, canvasY, canvas);
+        drawMagnifierOriginal(canvasX, canvasY);
     }
 }
 
@@ -295,6 +313,7 @@ function handleCanvasHover(e) {
 function handleCanvasLeave() {
     magnifierActive = false;
     elements.magnifier.style.display = 'none';
+    elements.magnifierOriginal.style.display = 'none';
     elements.crosshairH.style.display = 'none';
     elements.crosshairV.style.display = 'none';
 }
@@ -465,6 +484,45 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
             magnifierCtx.fillText(hexOriginal, magnifierSize/2 - 30, magnifierSize - 10);
         }
     }
+}
+
+// Draw original-only magnifier (no pixel image)
+function drawMagnifierOriginal(canvasX, canvasY) {
+    const ctx = elements.magnifierCanvasOriginal.getContext('2d');
+    const sourceSize = currentResolution;
+    const magnifierSize = 400;
+    elements.magnifierCanvasOriginal.width = magnifierSize;
+    elements.magnifierCanvasOriginal.height = magnifierSize;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, magnifierSize, magnifierSize);
+    
+    // Draw original
+    ctx.drawImage(
+        elements.originalCanvas,
+        canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
+        0, 0, magnifierSize, magnifierSize
+    );
+    
+    // Draw grid if enabled
+    if (showGrid) {
+        ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
+        ctx.lineWidth = 1;
+        const pixelsPerYarnLine = magnifierSize / sourceSize;
+        for (let x = 0; x <= magnifierSize; x += pixelsPerYarnLine) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, magnifierSize); ctx.stroke();
+        }
+        for (let y = 0; y <= magnifierSize; y += pixelsPerYarnLine) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(magnifierSize, y); ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.9)';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(2, 2, magnifierSize - 4, magnifierSize - 4);
+    }
+    
+    // Center red dot
+    ctx.fillStyle = 'red';
+    const center = magnifierSize / 2;
+    ctx.fillRect(center - 2, center - 2, 4, 4);
 }
 
 // Drag and Drop handlers

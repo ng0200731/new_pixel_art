@@ -1,4 +1,4 @@
-/* Version: 2.9.13 */
+/* Version: 2.9.16 */
 :root {
     --primary-color: #2563eb;
     --secondary-color: #64748b;
@@ -193,6 +193,9 @@ header h1 {
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
     background: white;
 }
+
+.magnifier-original { border-color: #10b981; }
+.magnifier-pixel { border-color: #2563eb; }
 
 #magnifier-canvas {
     width: 100%;
