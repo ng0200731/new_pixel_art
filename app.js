@@ -254,13 +254,19 @@ function sortPalette(sortType) {
 
 // Enable replace mode
 function enableReplaceMode() {
-    replaceMode = true;
+    // Toggle behavior
+    replaceMode = !replaceMode;
     replaceSourceIndex = null;
     if (elements.replaceInstructions) {
-        elements.replaceInstructions.style.display = 'block';
+        elements.replaceInstructions.style.display = replaceMode ? 'block' : 'none';
         elements.replaceInstructions.textContent = 'Click a color to replace (1)';
     }
-    elements.replaceButton?.classList.add('active');
+    if (replaceMode) {
+        elements.replaceButton?.classList.add('active');
+    } else {
+        elements.replaceButton?.classList.remove('active');
+        document.querySelectorAll('.color-row').forEach(r => r.classList.remove('selected-source'));
+    }
 }
 
 // Show confirmation modal and perform replace
@@ -1043,6 +1049,8 @@ function displayColorPalette(colors, stats, originalIndices) {
             }
         });
         row.addEventListener('mouseleave', () => {
+            // In replace mode keep the first color's highlight active
+            if (replaceMode) return;
             if (!highlightLocked) {
                 row.classList.remove('active');
                 clearHighlight();
@@ -1055,6 +1063,10 @@ function displayColorPalette(colors, stats, originalIndices) {
                     // First pick (source)
                     replaceSourceIndex = item.originalIndex;
                     row.classList.add('selected-source');
+                    // Lock and display highlight for the selected source color
+                    highlightLocked = true;
+                    lockedColorIndex = item.originalIndex;
+                    highlightColorPixels(item.originalIndex);
                     // Show instruction to pick the replacement
                     if (elements.replaceInstructions) {
                         elements.replaceInstructions.style.display = 'block';

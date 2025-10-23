@@ -557,6 +557,19 @@ header h1 {
     border-color: var(--primary-color);
 }
 
+/* Ensure Replace Color button is visible by default */
+.sort-btn.replace-btn {
+    background: var(--warning-color);
+    color: #fff;
+    border-color: var(--warning-color);
+}
+.sort-btn.replace-btn:hover {
+    filter: brightness(0.95);
+}
+.sort-btn.replace-btn.active {
+    box-shadow: 0 0 0 2px rgba(245,158,11,0.4) inset;
+}
+
 /* Palette Rows */
 .palette-rows {
     display: flex;
