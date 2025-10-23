@@ -41,6 +41,7 @@ const elements = {
     currentK: document.getElementById('current-k'),
     convertBtn: document.getElementById('convert-btn'),
     downloadBtn: document.getElementById('download-btn'),
+    downloadBmpBtn: document.getElementById('download-bmp-btn'),
     originalCanvas: document.getElementById('original-canvas'),
     quantizedCanvas: document.getElementById('quantized-canvas'),
     magnifier: document.getElementById('magnifier'),
@@ -99,6 +100,7 @@ function initializeEventListeners() {
     // Action buttons
     elements.convertBtn.addEventListener('click', convertImage);
     elements.downloadBtn.addEventListener('click', downloadYarnMap);
+    elements.downloadBmpBtn?.addEventListener('click', downloadPixelBmp);
     
     // Sort buttons
     elements.sortBrightness?.addEventListener('click', () => sortPalette('brightness'));
@@ -313,6 +315,15 @@ function showReplaceConfirm(sourceIndex, targetIndex) {
         replaceSourceIndex = null;
         if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
         elements.replaceButton?.classList.remove('active');
+        // Clear any highlight and row selections after replacement
+        highlightLocked = false;
+        lockedColorIndex = null;
+        highlightedColorIndex = -1;
+        clearHighlight();
+        document.querySelectorAll('.color-row').forEach(r => {
+            r.classList.remove('active');
+            r.classList.remove('selected-source');
+        });
     });
 }
 
@@ -966,6 +977,7 @@ async function convertImage() {
         
         // Enable download button
         elements.downloadBtn.disabled = false;
+        elements.downloadBmpBtn && (elements.downloadBmpBtn.disabled = false);
         
         // Hide processing overlay
         showProcessing(false);
@@ -1238,6 +1250,28 @@ function downloadYarnMap() {
     link.download = `yarn_map_${DESIGN_WIDTH}x${DESIGN_HEIGHT}cm_${currentResolution}lines_${currentK}colors.csv`;
     link.click();
     URL.revokeObjectURL(url);
+}
+
+// Download the quantized pixel canvas as a BMP file
+function downloadPixelBmp() {
+    if (!quantizedResult) return;
+    const canvas = elements.quantizedCanvas;
+    // Try browser BMP support; if not, fall back to PNG but keep .bmp name
+    const mime = 'image/bmp';
+    let dataURL = '';
+    try {
+        dataURL = canvas.toDataURL(mime);
+        if (!dataURL || !dataURL.startsWith('data:image/bmp')) {
+            // Fallback to PNG
+            dataURL = canvas.toDataURL('image/png');
+        }
+    } catch (e) {
+        dataURL = canvas.toDataURL('image/png');
+    }
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = `pixel_image_${DESIGN_WIDTH}x${DESIGN_HEIGHT}cm_${currentResolution}lines_${currentK}colors.bmp`;
+    link.click();
 }
 
 // Initialize application
