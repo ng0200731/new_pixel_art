@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.19
+// Version: 2.9.27
 
-const VERSION = '2.9.19';
+const VERSION = '2.9.27';
 
 // Global state
 let originalImage = null;
@@ -20,6 +20,10 @@ let currentSort = 'brightness'; // 'brightness' or 'pixels'
 let colorData = null; // Store color data for sorting
 let showGrid = false;
 let gridCanvas = null;
+let lastMouseX = 0; // track last mouse position for magnifier realign
+let lastMouseY = 0;
+let replaceMode = false; // whether we are selecting colors to replace
+let replaceSourceIndex = null; // first chosen color (to be replaced)
 
 // DOM elements
 const elements = {
@@ -51,6 +55,8 @@ const elements = {
     paletteRows: document.getElementById('palette-rows'),
     sortBrightness: document.getElementById('sort-brightness'),
     sortPixels: document.getElementById('sort-pixels'),
+    replaceButton: document.getElementById('replace-color-btn'),
+    replaceInstructions: document.getElementById('replace-instructions'),
     imageInfo: document.getElementById('image-info'),
     processingOverlay: document.getElementById('processing-overlay'),
     progressFill: document.getElementById('progress-fill')
@@ -96,6 +102,8 @@ function initializeEventListeners() {
     // Sort buttons
     elements.sortBrightness?.addEventListener('click', () => sortPalette('brightness'));
     elements.sortPixels?.addEventListener('click', () => sortPalette('pixels'));
+    // Replace color workflow
+    elements.replaceButton?.addEventListener('click', enableReplaceMode);
     
     // Canvas hover events for magnifier and crosshairs
     elements.originalCanvas.addEventListener('mousemove', handleCanvasHover);
@@ -147,7 +155,7 @@ function drawGrid() {
         gridCanvas.className = 'grid-overlay';
         gridCanvas.style.pointerEvents = 'none';
         gridCanvas.style.position = 'absolute';
-        gridCanvas.style.zIndex = '100';
+        gridCanvas.style.zIndex = '150';
         
         // Set size to match the canvas
         gridCanvas.width = canvas.width;
@@ -244,6 +252,87 @@ function sortPalette(sortType) {
     }
 }
 
+// Enable replace mode
+function enableReplaceMode() {
+    replaceMode = true;
+    replaceSourceIndex = null;
+    if (elements.replaceInstructions) {
+        elements.replaceInstructions.style.display = 'block';
+        elements.replaceInstructions.textContent = 'Click a color to replace (1)';
+    }
+}
+
+// Show confirmation modal and perform replace
+function showReplaceConfirm(sourceIndex, targetIndex) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    const sourceHex = rgbToHex(quantizedResult.centroids[sourceIndex]);
+    const targetHex = rgbToHex(quantizedResult.centroids[targetIndex]);
+    modal.innerHTML = `
+        <h4>Confirm Replace</h4>
+        <div>Color ${sourceHex} will be replaced by ${targetHex}. Please confirm.</div>
+        <div class="actions">
+            <button id="rc-cancel" class="sort-btn">Cancel</button>
+            <button id="rc-confirm" class="sort-btn active">Confirm</button>
+        </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#rc-cancel').addEventListener('click', () => {
+        document.body.removeChild(overlay);
+        replaceMode = false;
+        replaceSourceIndex = null;
+        if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
+    });
+    overlay.querySelector('#rc-confirm').addEventListener('click', () => {
+        document.body.removeChild(overlay);
+        performReplace(sourceIndex, targetIndex);
+        replaceMode = false;
+        replaceSourceIndex = null;
+        if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
+    });
+}
+
+// Replace logic: remap assignments of source to target, update palette stats/display
+function performReplace(sourceIndex, targetIndex) {
+    if (!quantizedResult) return;
+    if (sourceIndex === targetIndex) return;
+
+    // Reassign pixels
+    for (let i = 0; i < quantizedResult.assignments.length; i++) {
+        if (quantizedResult.assignments[i] === sourceIndex) {
+            quantizedResult.assignments[i] = targetIndex;
+        } else if (quantizedResult.assignments[i] > sourceIndex) {
+            // If we remove the centroid later, shift indices; handle afterwards
+        }
+    }
+
+    // Remove source color from centroids and compact assignment indices
+    quantizedResult.centroids.splice(sourceIndex, 1);
+    for (let i = 0; i < quantizedResult.assignments.length; i++) {
+        const a = quantizedResult.assignments[i];
+        if (a > sourceIndex) quantizedResult.assignments[i] = a - 1;
+    }
+
+    // Redraw quantized canvas
+    const newImage = applyQuantization(currentImageData, quantizedResult.centroids, quantizedResult.assignments);
+    const ctx = elements.quantizedCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.putImageData(newImage, 0, 0);
+
+    // Update color data and palette UI
+    const stats = calculateColorStats(quantizedResult.assignments, quantizedResult.centroids.length);
+    colorData = {
+        colors: quantizedResult.centroids,
+        stats: stats,
+        originalIndices: quantizedResult.centroids.map((_, i) => i)
+    };
+    displayColorPalette(colorData.colors, stats, colorData.originalIndices);
+}
+
 // Handle canvas hover for magnifier and crosshairs
 function handleCanvasHover(e) {
     if (!originalImage || !currentImageData) return;
@@ -252,18 +341,24 @@ function handleCanvasHover(e) {
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
     
     // Show crosshairs
     elements.crosshairH.style.display = 'block';
     elements.crosshairV.style.display = 'block';
+    elements.crosshairH.style.zIndex = '5000';
+    elements.crosshairV.style.zIndex = '5000';
     elements.crosshairH.style.top = `${e.clientY}px`;
     elements.crosshairV.style.left = `${e.clientX}px`;
     
-    // Scale coordinates to actual canvas size
+    // Scale coordinates to actual canvas size and normalize to [0,1]
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     const canvasX = x * scaleX;
     const canvasY = y * scaleY;
+    const u = Math.min(Math.max(canvasX / canvas.width, 0), 1);
+    const v = Math.min(Math.max(canvasY / canvas.height, 0), 1);
     
     // Show magnifier with smart positioning
     if (magnifierActive) {
@@ -303,9 +398,9 @@ function handleCanvasHover(e) {
         elements.magnifier.style.left = `${posQuant.left}px`;
         elements.magnifier.style.top = `${posQuant.top}px`;
 
-        // Draw magnified areas
-        drawMagnifier(canvasX, canvasY, canvas);
-        drawMagnifierOriginal(canvasX, canvasY);
+        // Draw magnified areas (normalized coordinates for perfect sync)
+        drawMagnifier(u, v);
+        drawMagnifierOriginal(u, v);
     }
 }
 
@@ -319,7 +414,7 @@ function handleCanvasLeave() {
 }
 
 // Draw magnifier content with red dot cursor and color info
-function drawMagnifier(canvasX, canvasY, sourceCanvas) {
+function drawMagnifier(u, v) {
     const magnifierCtx = elements.magnifierCanvas.getContext('2d');
     
     // Source size = 1cm = currentResolution pixels
@@ -335,16 +430,16 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
     magnifierCtx.imageSmoothingEnabled = false;
     magnifierCtx.clearRect(0, 0, magnifierSize, magnifierSize);
     
-    // Get color at cursor position
-    const pixelX = Math.floor(canvasX);
-    const pixelY = Math.floor(canvasY);
+    // Map normalized coords to pixel canvas space
+    const qx = Math.floor(u * elements.quantizedCanvas.width);
+    const qy = Math.floor(v * elements.quantizedCanvas.height);
     let originalColor = null;
     let pixelColor = null;
     
     // Get original color
-    if (currentImageData && pixelX >= 0 && pixelX < currentImageData.width && 
-        pixelY >= 0 && pixelY < currentImageData.height) {
-        const idx = (pixelY * currentImageData.width + pixelX) * 4;
+    if (currentImageData && qx >= 0 && qx < currentImageData.width && 
+        qy >= 0 && qy < currentImageData.height) {
+        const idx = (qy * currentImageData.width + qx) * 4;
         originalColor = [
             currentImageData.data[idx],
             currentImageData.data[idx + 1],
@@ -354,7 +449,7 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
     
     // Get quantized color
     if (quantizedResult && quantizedResult.assignments) {
-        const pixelIndex = pixelY * currentImageData.width + pixelX;
+        const pixelIndex = qy * currentImageData.width + qx;
         if (pixelIndex >= 0 && pixelIndex < quantizedResult.assignments.length) {
             const colorIndex = quantizedResult.assignments[pixelIndex];
             pixelColor = quantizedResult.centroids[colorIndex];
@@ -363,8 +458,8 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
     
     // Draw only the pixel image in the magnifier (no split)
     if (quantizedResult) {
-        const srcX = canvasX - sourceSize / 2;
-        const srcY = canvasY - sourceSize / 2;
+        const srcX = qx - sourceSize / 2;
+        const srcY = qy - sourceSize / 2;
         magnifierCtx.drawImage(
             elements.quantizedCanvas,
             srcX, srcY, sourceSize, sourceSize,
@@ -458,7 +553,7 @@ function drawMagnifier(canvasX, canvasY, sourceCanvas) {
 }
 
 // Draw original-only magnifier (no pixel image)
-function drawMagnifierOriginal(canvasX, canvasY) {
+function drawMagnifierOriginal(u, v) {
     const ctx = elements.magnifierCanvasOriginal.getContext('2d');
     const sourceSize = currentResolution;
     const magnifierSize = 400;
@@ -467,10 +562,16 @@ function drawMagnifierOriginal(canvasX, canvasY) {
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, magnifierSize, magnifierSize);
     
+    // Map normalized coords to original canvas space
+    const ox = Math.floor(u * elements.originalCanvas.width);
+    const oy = Math.floor(v * elements.originalCanvas.height);
+    const srcX = ox - sourceSize/2;
+    const srcY = oy - sourceSize/2;
+
     // Draw original
     ctx.drawImage(
         elements.originalCanvas,
-        canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
+        srcX, srcY, sourceSize, sourceSize,
         0, 0, magnifierSize, magnifierSize
     );
     
@@ -614,6 +715,14 @@ function showResolutionRecommendation(resolution) {
 function handleResolutionChange(event) {
     currentResolution = parseInt(event.target.value);
     if (originalImage) {
+        // Clear any selected color/highlight when swapping resolution
+        highlightedColorIndex = -1;
+        lockedColorIndex = null;
+        highlightLocked = false;
+        clearHighlight();
+        // Remove active state from palette rows
+        document.querySelectorAll('.color-row').forEach(r => r.classList.remove('active'));
+
         drawOriginalImage();
         updateImageInfo();
         // Auto-convert when resolution changes
@@ -621,6 +730,12 @@ function handleResolutionChange(event) {
         // Redraw grid if enabled
         if (showGrid) {
             setTimeout(drawGrid, 100);
+        }
+        // Re-align magnifiers after resolution swap using last cursor position
+        if (magnifierActive) {
+            const evt = new MouseEvent('mousemove', { clientX: lastMouseX || 0, clientY: lastMouseY || 0 });
+            if (elements.originalCanvas) elements.originalCanvas.dispatchEvent(evt);
+            if (elements.quantizedCanvas) elements.quantizedCanvas.dispatchEvent(evt);
         }
     }
 }
@@ -791,7 +906,7 @@ async function convertImage() {
         ctx.putImageData(quantizedResult.quantizedData, 0, 0);
         
         // Calculate statistics
-        const stats = calculateColorStats(quantizedResult.assignments, currentK);
+        const stats = calculateColorStats(quantizedResult.assignments, quantizedResult.centroids.length);
         
         // Store color data for sorting
         colorData = {
@@ -881,20 +996,35 @@ function displayColorPalette(colors, stats, originalIndices) {
                 clearHighlight();
             }
         });
-        // Click to lock/unlock highlight; ensure only one row is active
+        // Click behavior: if replace mode, pick source/destination; else toggle lock
         row.addEventListener('click', () => {
+            if (replaceMode) {
+                if (replaceSourceIndex === null) {
+                    // First pick (source)
+                    replaceSourceIndex = item.originalIndex;
+                    // Show instruction to pick the replacement
+                    if (elements.replaceInstructions) {
+                        elements.replaceInstructions.style.display = 'block';
+                        elements.replaceInstructions.textContent = '☀️ %  📊 %  (pls pick the replaced order)';
+                    }
+                } else {
+                    const targetIndex = item.originalIndex;
+                    // Confirm modal
+                    showReplaceConfirm(replaceSourceIndex, targetIndex);
+                }
+                return;
+            }
+
             if (highlightLocked && lockedColorIndex === item.originalIndex) {
                 // Clicking the same color unlocks it
                 highlightLocked = false;
                 lockedColorIndex = null;
-                // Clear active state from all rows
                 document.querySelectorAll('.color-row').forEach(r => r.classList.remove('active'));
                 clearHighlight();
             } else {
                 // Lock highlight to this color
                 highlightLocked = true;
                 lockedColorIndex = item.originalIndex;
-                // Clear active state from other rows first
                 document.querySelectorAll('.color-row').forEach(r => r.classList.remove('active'));
                 row.classList.add('active');
                 highlightColorPixels(item.originalIndex);
@@ -916,7 +1046,8 @@ function highlightColorPixels(colorIndex) {
         highlightCanvas = document.createElement('canvas');
         highlightCanvas.style.position = 'absolute';
         highlightCanvas.style.pointerEvents = 'none';
-        highlightCanvas.style.zIndex = '2000'; // Very high z-index
+        // Place highlight below grid and crosshair
+        highlightCanvas.style.zIndex = '100';
         highlightCanvas.style.imageRendering = 'pixelated';
         highlightCanvas.style.imageRendering = '-moz-crisp-edges';
         highlightCanvas.style.imageRendering = '-webkit-optimize-contrast';

@@ -1,5 +1,5 @@
 // K-means clustering algorithm for color quantization
-// Version: 2.9.19
+// Version: 2.9.27
 
 // Helper: Calculate weighted perceptual distance (prevents black→red merging)
 function colorDistance(c1, c2) {
@@ -133,6 +133,23 @@ function mergePaletteToK(pixels, assignments, centroids, targetK) {
     }
 
     return { centroids: currentCentroids, assignments: currentAssignments };
+}
+
+// Ensure every pixel has a valid assignment; if not, reassign to nearest centroid
+function sanitizeAssignments(assignments, centroids, pixels) {
+    const k = centroids.length;
+    const cleaned = new Array(assignments.length);
+    for (let i = 0; i < assignments.length; i++) {
+        const a = assignments[i];
+        if (a >= 0 && a < k) {
+            cleaned[i] = a;
+        } else {
+            // Fallback: compute nearest centroid for this pixel
+            const { index } = findClosestCentroid(pixels[i], centroids);
+            cleaned[i] = index;
+        }
+    }
+    return cleaned;
 }
 
 // Helper: Sample pixels from image data to speed up processing
@@ -719,6 +736,9 @@ function applyQuantization(imageData, centroids, assignments) {
 
 // Quantize image using all pixels for final mapping
 function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStable = true, useActualColors = true) {
+    // Preserve previous run for stable K reduction merge behavior
+    const prev = lastQuantization && Array.isArray(lastQuantization.assignments) ? lastQuantization : null;
+
     // Sample pixels for clustering
     const sampledPixels = samplePixels(imageData, sampleRate);
     
@@ -739,6 +759,27 @@ function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStab
     // Persist last state to support stable reduction
     lastQuantization = { pixels: allPixels, assignments: assignments, centroids: centroids, k: centroids.length };
     
+    // When reducing K compared to previous run, optionally merge the smallest previous
+    // cluster into ONE nearest remaining color (not split across many), per spec v2.0.0
+    if (prev && prev.k > k && prev.centroids && prev.assignments && prev.centroids.length === prev.k) {
+        // Identify smallest previous cluster index sPrev
+        const prevCounts = new Array(prev.k).fill(0);
+        for (let i = 0; i < prev.assignments.length; i++) {
+            const a = prev.assignments[i];
+            if (a >= 0 && a < prev.k) prevCounts[a]++;
+        }
+        let sPrev = 0; let minPrev = Infinity;
+        for (let i = 0; i < prevCounts.length; i++) {
+            if (prevCounts[i] < minPrev) { minPrev = prevCounts[i]; sPrev = i; }
+        }
+        // Find the single nearest current centroid to the removed previous centroid
+        const { index: tNow } = findClosestCentroid(prev.centroids[sPrev], centroids);
+        // Force reassign: every pixel that previously belonged to sPrev goes to tNow
+        for (let i = 0; i < assignments.length; i++) {
+            if (prev.assignments[i] === sPrev) assignments[i] = tNow;
+        }
+    }
+
     // If the returned number of centroids is larger than target k because of stability,
     // merge palette to exactly k WITHOUT losing any pixels
     if (centroids.length > k) {
@@ -746,6 +787,8 @@ function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStab
         centroids = merged.centroids;
         assignments = merged.assignments;
     }
+    // Hard guarantee: all pixels must be assigned to a valid color
+    assignments = sanitizeAssignments(assignments, centroids, allPixels);
     
     // Apply quantization (no pixel removal; all pixels assigned)
     const quantizedData = applyQuantization(imageData, centroids, assignments);
