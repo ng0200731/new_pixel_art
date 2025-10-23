@@ -24,6 +24,7 @@ let lastMouseX = 0; // track last mouse position for magnifier realign
 let lastMouseY = 0;
 let replaceMode = false; // whether we are selecting colors to replace
 let replaceSourceIndex = null; // first chosen color (to be replaced)
+let replacedColors = new Set(); // palette indices marked as replaced (show red strip)
 
 // DOM elements
 const elements = {
@@ -330,7 +331,8 @@ function performReplace(sourceIndex, targetIndex) {
     }
 
     // Keep the source color in the palette for visual reference with a red cross
-    // but remap its pixels to target. We mark UI state as 'replaced' and expose reset.
+    // but remap its pixels to target. Track it in replacedColors so it persists.
+    replacedColors.add(sourceIndex);
 
     // Redraw quantized canvas
     const newImage = applyQuantization(currentImageData, quantizedResult.centroids, quantizedResult.assignments);
@@ -347,28 +349,14 @@ function performReplace(sourceIndex, targetIndex) {
     };
     // Re-render palette with replaced state and reset icons
     displayColorPalette(colorData.colors, stats, colorData.originalIndices);
-    // Mark the replaced row and attach reset
-    const rows = document.querySelectorAll('.color-row');
-    rows.forEach(r => {
-        const idx = Number(r.dataset.colorIndex);
-        if (idx === sourceIndex) {
-            r.classList.add('replaced');
-            let reset = r.querySelector('.reset-icon');
-            if (!reset) {
-                reset = document.createElement('span');
-                reset.className = 'reset-icon';
-                reset.textContent = '↺ reset';
-                r.appendChild(reset);
-            }
-            reset.onclick = () => restoreReplacement(sourceIndex);
-        }
-    });
+    // Row rendering already uses replacedColors to persist visuals
 }
 
 // Restore the pixels that were remapped from sourceIndex back to the source color
 function restoreReplacement(sourceIndex) {
     if (!quantizedResult) return;
-    const sourceColor = quantizedResult.centroids[sourceIndex];
+    // Remove persistent replaced mark
+    replacedColors.delete(sourceIndex);
     // Recompute nearest for only those currently mapped to target due to our previous move
     for (let i = 0; i < quantizedResult.assignments.length; i++) {
         // If pixel was originally from source, we cannot know now. So recompute assignment:
@@ -1040,17 +1028,42 @@ function displayColorPalette(colors, stats, originalIndices) {
         
         row.appendChild(swatch);
         row.appendChild(info);
+
+        // If this color was previously replaced, show red cross and reset icon
+        if (replacedColors.has(item.originalIndex)) {
+            row.classList.add('replaced');
+            const reset = document.createElement('span');
+            reset.className = 'reset-icon';
+            reset.textContent = '↺ reset';
+            reset.onclick = () => restoreReplacement(item.originalIndex);
+            row.appendChild(reset);
+        }
         
         // Add hover and click events
         row.addEventListener('mouseenter', () => {
+            // Replace mode: before first click, hover previews highlight; after first click, ignore
+            if (replaceMode) {
+                if (replaceSourceIndex === null) {
+                    row.classList.add('active');
+                    highlightLocked = false;
+                    highlightColorPixels(item.originalIndex);
+                }
+                return;
+            }
             if (!highlightLocked) {
                 row.classList.add('active');
                 highlightColorPixels(item.originalIndex);
             }
         });
         row.addEventListener('mouseleave', () => {
-            // In replace mode keep the first color's highlight active
-            if (replaceMode) return;
+            // Replace mode: before first click, remove preview; after first click, keep locked
+            if (replaceMode) {
+                if (replaceSourceIndex === null) {
+                    row.classList.remove('active');
+                    clearHighlight();
+                }
+                return;
+            }
             if (!highlightLocked) {
                 row.classList.remove('active');
                 clearHighlight();
@@ -1070,7 +1083,7 @@ function displayColorPalette(colors, stats, originalIndices) {
                     // Show instruction to pick the replacement
                     if (elements.replaceInstructions) {
                         elements.replaceInstructions.style.display = 'block';
-                        elements.replaceInstructions.textContent = '☀️ %  📊 %  (pls pick the replaced order)';
+                        elements.replaceInstructions.textContent = 'Select replacement color (2)';
                     }
                 } else {
                     const targetIndex = item.originalIndex;
