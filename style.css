@@ -487,12 +487,33 @@ header h1 {
     background: var(--warning-color);
     color: #fff;
 }
+.replace-btn.active { box-shadow: 0 0 0 2px rgba(245,158,11,0.4) inset; }
 
 .replace-instructions {
     margin-top: 6px;
     font-size: 0.75rem;
     color: var(--text-secondary);
 }
+
+.replace-controls { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+
+.color-row.selected-source { outline: 2px dashed var(--warning-color); }
+.color-row.replaced .color-swatch { position: relative; }
+.color-row.replaced .color-swatch::after {
+    content: '';
+    position: absolute;
+    left: 2px; right: 2px; top: 50%; height: 2px;
+    background: var(--danger-color);
+    transform: rotate(-20deg);
+}
+.reset-icon {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--primary-color);
+    cursor: pointer;
+    display: none;
+}
+.color-row.replaced .reset-icon { display: inline-block; }
 
 /* Modal for replace confirm */
 .modal-overlay {

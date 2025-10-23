@@ -260,6 +260,7 @@ function enableReplaceMode() {
         elements.replaceInstructions.style.display = 'block';
         elements.replaceInstructions.textContent = 'Click a color to replace (1)';
     }
+    elements.replaceButton?.classList.add('active');
 }
 
 // Show confirmation modal and perform replace
@@ -272,7 +273,17 @@ function showReplaceConfirm(sourceIndex, targetIndex) {
     const targetHex = rgbToHex(quantizedResult.centroids[targetIndex]);
     modal.innerHTML = `
         <h4>Confirm Replace</h4>
-        <div>Color ${sourceHex} will be replaced by ${targetHex}. Please confirm.</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span style="display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:16px;height:16px;border:1px solid #ccc;background:${sourceHex};display:inline-block;"></span>
+                <span>${sourceHex}</span>
+            </span>
+            <span>»</span>
+            <span style="display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:16px;height:16px;border:1px solid #ccc;background:${targetHex};display:inline-block;"></span>
+                <span>${targetHex}</span>
+            </span>
+        </div>
         <div class="actions">
             <button id="rc-cancel" class="sort-btn">Cancel</button>
             <button id="rc-confirm" class="sort-btn active">Confirm</button>
@@ -286,6 +297,7 @@ function showReplaceConfirm(sourceIndex, targetIndex) {
         replaceMode = false;
         replaceSourceIndex = null;
         if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
+        elements.replaceButton?.classList.remove('active');
     });
     overlay.querySelector('#rc-confirm').addEventListener('click', () => {
         document.body.removeChild(overlay);
@@ -293,6 +305,7 @@ function showReplaceConfirm(sourceIndex, targetIndex) {
         replaceMode = false;
         replaceSourceIndex = null;
         if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
+        elements.replaceButton?.classList.remove('active');
     });
 }
 
@@ -310,12 +323,8 @@ function performReplace(sourceIndex, targetIndex) {
         }
     }
 
-    // Remove source color from centroids and compact assignment indices
-    quantizedResult.centroids.splice(sourceIndex, 1);
-    for (let i = 0; i < quantizedResult.assignments.length; i++) {
-        const a = quantizedResult.assignments[i];
-        if (a > sourceIndex) quantizedResult.assignments[i] = a - 1;
-    }
+    // Keep the source color in the palette for visual reference with a red cross
+    // but remap its pixels to target. We mark UI state as 'replaced' and expose reset.
 
     // Redraw quantized canvas
     const newImage = applyQuantization(currentImageData, quantizedResult.centroids, quantizedResult.assignments);
@@ -330,6 +339,49 @@ function performReplace(sourceIndex, targetIndex) {
         stats: stats,
         originalIndices: quantizedResult.centroids.map((_, i) => i)
     };
+    // Re-render palette with replaced state and reset icons
+    displayColorPalette(colorData.colors, stats, colorData.originalIndices);
+    // Mark the replaced row and attach reset
+    const rows = document.querySelectorAll('.color-row');
+    rows.forEach(r => {
+        const idx = Number(r.dataset.colorIndex);
+        if (idx === sourceIndex) {
+            r.classList.add('replaced');
+            let reset = r.querySelector('.reset-icon');
+            if (!reset) {
+                reset = document.createElement('span');
+                reset.className = 'reset-icon';
+                reset.textContent = '↺ reset';
+                r.appendChild(reset);
+            }
+            reset.onclick = () => restoreReplacement(sourceIndex);
+        }
+    });
+}
+
+// Restore the pixels that were remapped from sourceIndex back to the source color
+function restoreReplacement(sourceIndex) {
+    if (!quantizedResult) return;
+    const sourceColor = quantizedResult.centroids[sourceIndex];
+    // Recompute nearest for only those currently mapped to target due to our previous move
+    for (let i = 0; i < quantizedResult.assignments.length; i++) {
+        // If pixel was originally from source, we cannot know now. So recompute assignment:
+        const px = i % currentImageData.width;
+        // Assign by nearest centroid again ensures consistency; but to restore exact,
+        // we bias toward source color by checking if it's the nearest.
+        const { index } = findClosestCentroid([
+            currentImageData.data[i*4],
+            currentImageData.data[i*4+1],
+            currentImageData.data[i*4+2]
+        ], quantizedResult.centroids);
+        quantizedResult.assignments[i] = index;
+    }
+    const img = applyQuantization(currentImageData, quantizedResult.centroids, quantizedResult.assignments);
+    const ctx = elements.quantizedCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.putImageData(img, 0, 0);
+    const stats = calculateColorStats(quantizedResult.assignments, quantizedResult.centroids.length);
+    colorData = { colors: quantizedResult.centroids, stats, originalIndices: quantizedResult.centroids.map((_,i)=>i) };
     displayColorPalette(colorData.colors, stats, colorData.originalIndices);
 }
 
@@ -1002,6 +1054,7 @@ function displayColorPalette(colors, stats, originalIndices) {
                 if (replaceSourceIndex === null) {
                     // First pick (source)
                     replaceSourceIndex = item.originalIndex;
+                    row.classList.add('selected-source');
                     // Show instruction to pick the replacement
                     if (elements.replaceInstructions) {
                         elements.replaceInstructions.style.display = 'block';
@@ -1011,6 +1064,8 @@ function displayColorPalette(colors, stats, originalIndices) {
                     const targetIndex = item.originalIndex;
                     // Confirm modal
                     showReplaceConfirm(replaceSourceIndex, targetIndex);
+                    // Clear visual on source
+                    document.querySelectorAll('.color-row').forEach(r => r.classList.remove('selected-source'));
                 }
                 return;
             }
