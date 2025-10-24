@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.27
+// Version: 2.9.28
 
-const VERSION = '2.9.27';
+const VERSION = '2.9.28';
 
 // Global state
 let originalImage = null;
@@ -61,7 +61,8 @@ const elements = {
     replaceInstructions: document.getElementById('replace-instructions'),
     imageInfo: document.getElementById('image-info'),
     processingOverlay: document.getElementById('processing-overlay'),
-    progressFill: document.getElementById('progress-fill')
+    progressFill: document.getElementById('progress-fill'),
+    activeColorCount: document.getElementById('active-color-count')
 };
 
 // Initialize event listeners
@@ -360,6 +361,11 @@ function performReplace(sourceIndex, targetIndex) {
     };
     // Re-render palette with replaced state and reset icons
     displayColorPalette(colorData.colors, stats, colorData.originalIndices);
+    // Update active color indicator explicitly after replace
+    if (elements.activeColorCount) {
+        const totalActive = stats.counts.reduce((acc, c, i) => acc + ((c > 0 && !replacedColors.has(i)) ? 1 : 0), 0);
+        elements.activeColorCount.textContent = `(${totalActive} active)`;
+    }
     // Row rendering already uses replacedColors to persist visuals
 }
 
@@ -388,6 +394,11 @@ function restoreReplacement(sourceIndex) {
     const stats = calculateColorStats(quantizedResult.assignments, quantizedResult.centroids.length);
     colorData = { colors: quantizedResult.centroids, stats, originalIndices: quantizedResult.centroids.map((_,i)=>i) };
     displayColorPalette(colorData.colors, stats, colorData.originalIndices);
+    // Update active color indicator explicitly after reset
+    if (elements.activeColorCount) {
+        const totalActive = stats.counts.reduce((acc, c, i) => acc + ((c > 0 && !replacedColors.has(i)) ? 1 : 0), 0);
+        elements.activeColorCount.textContent = `(${totalActive} active)`;
+    }
 }
 
 // Handle canvas hover for magnifier and crosshairs
@@ -1018,6 +1029,15 @@ function displayColorPalette(colors, stats, originalIndices) {
     
     // Clear existing content
     elements.paletteRows.innerHTML = '';
+    // Update active color count: non-zero count AND not marked as replaced
+    if (elements.activeColorCount) {
+        const activeCount = sortedData.reduce((acc, item) => {
+            const nonZero = item.count > 0;
+            const notReplaced = !replacedColors.has(item.originalIndex);
+            return acc + (nonZero && notReplaced ? 1 : 0);
+        }, 0);
+        elements.activeColorCount.textContent = `(${activeCount} active)`;
+    }
     
     // Create rows for each color
     sortedData.forEach((item, displayIndex) => {

@@ -1,4 +1,4 @@
-/* Version: 2.9.27 */
+/* Version: 2.9.28 */
 :root {
     --primary-color: #2563eb;
     --secondary-color: #64748b;
@@ -476,6 +476,12 @@ header h1 {
     font-size: 0.9rem;
     color: var(--text-primary);
     margin: 0;
+}
+
+.active-color-count {
+    font-weight: 600;
+    color: var(--primary-color);
+    margin-left: 6px;
 }
 
 .sort-buttons {
