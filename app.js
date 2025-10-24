@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.28
+// Version: 2.9.29
 
-const VERSION = '2.9.28';
+const VERSION = '2.9.29';
 
 // Global state
 let originalImage = null;
@@ -526,8 +526,12 @@ function drawMagnifier(u, v) {
     
     // Draw only the pixel image in the magnifier (no split)
     if (quantizedResult) {
-        const srcX = qx - sourceSize / 2;
-        const srcY = qy - sourceSize / 2;
+        // Compute integer-aligned source window so pixel boundaries align with grid
+        let srcX = Math.floor(qx - sourceSize / 2);
+        let srcY = Math.floor(qy - sourceSize / 2);
+        // Clamp to image bounds
+        srcX = Math.max(0, Math.min(srcX, elements.quantizedCanvas.width - sourceSize));
+        srcY = Math.max(0, Math.min(srcY, elements.quantizedCanvas.height - sourceSize));
         magnifierCtx.drawImage(
             elements.quantizedCanvas,
             srcX, srcY, sourceSize, sourceSize,
@@ -577,10 +581,12 @@ function drawMagnifier(u, v) {
             magnifierCtx.strokeRect(2, 2, magnifierSize - 4, magnifierSize - 4);
         }
         
-        // Draw red dot for cursor position at lens center
+        // Draw red square exactly covering the hovered source pixel inside the lens
+        const pxPerSource = magnifierSize / sourceSize; // magnifier pixels per one source pixel
+        const localX = (qx - srcX) * pxPerSource;
+        const localY = (qy - srcY) * pxPerSource;
         magnifierCtx.fillStyle = 'red';
-        const center = magnifierSize / 2;
-        magnifierCtx.fillRect(center - 2, center - 2, 4, 4);
+        magnifierCtx.fillRect(Math.floor(localX), Math.floor(localY), Math.ceil(pxPerSource), Math.ceil(pxPerSource));
         
         // Display color hex code at bottom (pixel only)
         if (pixelColor) {
@@ -659,10 +665,12 @@ function drawMagnifierOriginal(u, v) {
         ctx.strokeRect(2, 2, magnifierSize - 4, magnifierSize - 4);
     }
     
-    // Center red dot
+    // Red square sized to one smallest grid cell (1 source pixel)
+    const pxPerSource = magnifierSize / sourceSize;
+    const cellPx = pxPerSource;
     ctx.fillStyle = 'red';
-    const center = magnifierSize / 2;
-    ctx.fillRect(center - 2, center - 2, 4, 4);
+    const center = Math.floor(magnifierSize / 2) - Math.floor(cellPx / 2);
+    ctx.fillRect(center, center, Math.ceil(cellPx), Math.ceil(cellPx));
 }
 
 // Drag and Drop handlers
