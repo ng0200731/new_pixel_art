@@ -1,7 +1,8 @@
-/* Adjacent empty block */
+/* Adjacent mirror */
 .adjacent-panel { padding: 15px !important; }
-.adjacent-placeholder { padding: 6px 0; }
-/* Version: 2.9.31 */
+.adjacent-mirror { display:flex; flex-wrap:wrap; gap:6px; }
+.adjacent-swatch { width: 22px; height: 22px; border-radius: 4px; border: 2px solid var(--border); }
+/* Version: 2.9.32 */
 :root {
     --primary-color: #2563eb;
     --secondary-color: #64748b;

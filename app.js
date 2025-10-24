@@ -62,7 +62,9 @@ const elements = {
     imageInfo: document.getElementById('image-info'),
     processingOverlay: document.getElementById('processing-overlay'),
     progressFill: document.getElementById('progress-fill'),
-    activeColorCount: document.getElementById('active-color-count')
+    activeColorCount: document.getElementById('active-color-count'),
+    adjacentPanel: document.getElementById('adjacent-panel'),
+    adjacentTargetOptions: document.getElementById('adjacent-target-options')
 };
 
 // Initialize event listeners
@@ -1153,6 +1155,20 @@ function displayColorPalette(colors, stats, originalIndices) {
         
         elements.paletteRows.appendChild(row);
     });
+
+    // Render Adjacent mirror: active colors only (count > 0 and not replaced), same order
+    if (elements.adjacentTargetOptions) {
+        elements.adjacentTargetOptions.innerHTML = '';
+        sortedData.forEach(item => {
+            const isActive = item.count > 0 && !replacedColors.has(item.originalIndex);
+            if (!isActive) return;
+            const sw = document.createElement('div');
+            sw.className = 'adjacent-swatch';
+            sw.style.background = rgbToHex(item.color);
+            sw.title = `${rgbToHex(item.color)} • ${item.count.toLocaleString()} px`;
+            elements.adjacentTargetOptions.appendChild(sw);
+        });
+    }
 }
 
 // Highlight pixels of a specific color in yellow (solid)
