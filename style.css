@@ -1,4 +1,7 @@
-/* Version: 2.9.29 */
+/* Adjacent empty block */
+.adjacent-panel { padding: 15px !important; }
+.adjacent-placeholder { padding: 6px 0; }
+/* Version: 2.9.31 */
 :root {
     --primary-color: #2563eb;
     --secondary-color: #64748b;
@@ -582,6 +585,8 @@ header h1 {
     flex-direction: column;
     gap: 6px;
 }
+
+/* (adjacent panel styles removed as requested) */
 
 .color-row {
     display: flex;
