@@ -1,7 +1,18 @@
 /* Adjacent mirror */
 .adjacent-panel { padding: 15px !important; }
 .adjacent-mirror { display:flex; flex-wrap:wrap; gap:6px; }
-.adjacent-swatch { width: 22px; height: 22px; border-radius: 4px; border: 2px solid var(--border); }
+.adjacent-swatch { width: 22px; height: 22px; border-radius: 4px; border: 2px solid var(--border); cursor: pointer; }
+.adjacent-swatch.active { outline: 2px solid var(--primary-color); }
+/* Version: 2.9.39 */
+.adjacent-preview { position:absolute; pointer-events:none; z-index:120; image-rendering: pixelated; }
+.modal.draggable { cursor: move; }
+.coord-badge { position: fixed; z-index: 10000; background: rgba(0,0,0,0.8); color:#fff; font: 12px monospace; padding: 2px 6px; border-radius:4px; pointer-events:none; }
+.adjacent-controls { display:flex; flex-direction: column; gap:8px; margin-top:8px; }
+.adjacent-instructions { font-size: 0.75rem; color: var(--text-secondary); }
+.ignore-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.ignore-chip { display:inline-flex; align-items:center; gap:6px; padding:2px 6px; border:1px solid var(--border); border-radius:999px; font-size:0.75rem; }
+.ignore-chip-color { width:12px; height:12px; border-radius:50%; border:1px solid #ccc; }
+.ignore-chip .remove { cursor:pointer; color: var(--danger-color); font-weight:600; }
 /* Version: 2.9.32 */
 :root {
     --primary-color: #2563eb;

@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.31
+// Version: 2.9.39
 
-const VERSION = '2.9.31';
+const VERSION = '2.9.39';
 
 // Global state
 let originalImage = null;
@@ -50,6 +50,7 @@ const elements = {
     magnifierCanvasOriginal: document.getElementById('magnifier-canvas-original'),
     crosshairH: document.getElementById('crosshair-horizontal'),
     crosshairV: document.getElementById('crosshair-vertical'),
+    coordBadge: document.getElementById('coord-badge'),
     kInfo: document.getElementById('k-info'),
     prosList: document.getElementById('pros-list'),
     consList: document.getElementById('cons-list'),
@@ -64,7 +65,11 @@ const elements = {
     progressFill: document.getElementById('progress-fill'),
     activeColorCount: document.getElementById('active-color-count'),
     adjacentPanel: document.getElementById('adjacent-panel'),
-    adjacentTargetOptions: document.getElementById('adjacent-target-options')
+    adjacentTargetOptions: document.getElementById('adjacent-target-options'),
+    ignoreColorBtn: document.getElementById('ignore-color-btn'),
+    adjacentInstructions: document.getElementById('adjacent-instructions'),
+    ignoreChips: document.getElementById('ignore-chips'),
+    replaceSurroundBtn: document.getElementById('replace-surround-btn')
 };
 
 // Initialize event listeners
@@ -110,6 +115,60 @@ function initializeEventListeners() {
     elements.sortPixels?.addEventListener('click', () => sortPalette('pixels'));
     // Replace color workflow
     elements.replaceButton?.addEventListener('click', enableReplaceMode);
+    // Adjacent interactions
+    elements.adjacentTargetOptions?.addEventListener('click', (e)=>{
+        const sw = e.target.closest('.adjacent-swatch');
+        if (!sw) return;
+        const hex = sw.getAttribute('data-hex') || sw.getAttribute('title');
+        const idx = findColorIndexByHex(hex);
+        if (idx != null) {
+            // Toggle active class on swatches
+            document.querySelectorAll('.adjacent-swatch').forEach(el=> el.classList.remove('active'));
+            if (lockedColorIndex === idx && highlightLocked) {
+                // Deselect
+                highlightLocked = false;
+                lockedColorIndex = null;
+                clearHighlight();
+                if (elements.ignoreColorBtn) elements.ignoreColorBtn.disabled = true;
+                if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+            } else {
+                // Select
+                highlightLocked = true;
+                lockedColorIndex = idx;
+                highlightColorPixels(idx);
+                sw.classList.add('active');
+                if (elements.ignoreColorBtn) elements.ignoreColorBtn.disabled = false;
+            }
+            evaluateSurroundingCandidate();
+        }
+    });
+    elements.ignoreColorBtn?.addEventListener('click', () => {
+        ignorePickActive = !ignorePickActive;
+        if (elements.adjacentInstructions) {
+            elements.adjacentInstructions.textContent = ignorePickActive ? 'Pick 1 or more colors on the pixel image to ignore (click to add, × to remove).' : '';
+        }
+        evaluateSurroundingCandidate();
+    });
+    elements.quantizedCanvas.addEventListener('click', (e)=>{
+        if (!ignorePickActive || !quantizedResult) return;
+        const rect = elements.quantizedCanvas.getBoundingClientRect();
+        const x = Math.floor((e.clientX - rect.left) * elements.quantizedCanvas.width / rect.width);
+        const y = Math.floor((e.clientY - rect.top) * elements.quantizedCanvas.height / rect.height);
+        const idx = y * elements.quantizedCanvas.width + x;
+        const colorIdx = quantizedResult.assignments[idx];
+        addIgnoreChip(rgbToHex(quantizedResult.centroids[colorIdx]));
+        evaluateSurroundingCandidate();
+    });
+
+    elements.replaceSurroundBtn?.addEventListener('click', () => {
+        if (lockedColorIndex == null || surroundCandidateIndex == null) return;
+        const sourceIndex = lockedColorIndex;
+        const targetIndex = surroundCandidateIndex;
+        // Draw blue preview for pixels to be replaced
+        drawAdjacentPreview(sourceIndex);
+        // Show draggable confirmation
+        showAdjacentReplaceConfirm(sourceIndex, targetIndex);
+    });
     
     // Canvas hover events for magnifier and crosshairs
     elements.originalCanvas.addEventListener('mousemove', handleCanvasHover);
@@ -133,6 +192,183 @@ function initializeEventListeners() {
                 clearHighlight();
             }
         }
+    });
+}
+
+// Helper: find centroid index by hex
+function findColorIndexByHex(hex){
+    if (!quantizedResult) return null;
+    const target = hex.toLowerCase();
+    for (let i=0;i<quantizedResult.centroids.length;i++){
+        if (rgbToHex(quantizedResult.centroids[i]).toLowerCase() === target) return i;
+    }
+    return null;
+}
+
+let ignorePickActive = false;
+let ignoredHexes = new Set();
+let surroundCandidateIndex = null;
+let adjacentPreviewCanvas = null;
+function addIgnoreChip(hex){
+    if (!elements.ignoreChips) return;
+    const norm = (hex||'').toLowerCase();
+    if (ignoredHexes.has(norm)) return;
+    ignoredHexes.add(norm);
+    const chip = document.createElement('span');
+    chip.className = 'ignore-chip';
+    chip.innerHTML = `<span class="ignore-chip-color" style="background:${hex}"></span><span>${hex}</span><span class="remove">×</span>`;
+    chip.querySelector('.remove').addEventListener('click', ()=>{
+        ignoredHexes.delete(norm);
+        chip.remove();
+        evaluateSurroundingCandidate();
+    });
+    elements.ignoreChips.appendChild(chip);
+}
+
+// Determine if selected color is surrounded by exactly one other color (4-neighbors) after ignoring picks
+function evaluateSurroundingCandidate(){
+    surroundCandidateIndex = null;
+    if (!quantizedResult || !currentImageData || lockedColorIndex == null) {
+        if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+        return;
+    }
+    const width = currentImageData.width;
+    const height = currentImageData.height;
+    const assignments = quantizedResult.assignments;
+    const neighborSet = new Set();
+    // Map ignored hexes to indices once
+    const ignoredIdx = new Set();
+    ignoredHexes.forEach(h => {
+        const idx = findColorIndexByHex(h);
+        if (idx != null) ignoredIdx.add(idx);
+    });
+    for (let y = 0; y < height; y++) {
+        const rowBase = y * width;
+        for (let x = 0; x < width; x++) {
+            const i = rowBase + x;
+            if (assignments[i] !== lockedColorIndex) continue;
+            if (x > 0) neighborSet.add(assignments[i-1]);
+            if (x+1 < width) neighborSet.add(assignments[i+1]);
+            if (y > 0) neighborSet.add(assignments[i-width]);
+            if (y+1 < height) neighborSet.add(assignments[i+width]);
+        }
+    }
+    neighborSet.delete(lockedColorIndex);
+    ignoredIdx.forEach(idx => neighborSet.delete(idx));
+    if (neighborSet.size === 1) {
+        surroundCandidateIndex = [...neighborSet][0];
+        if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = false;
+    } else {
+        if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+    }
+}
+
+// Blue preview overlay for the pixels of the selected color
+function drawAdjacentPreview(sourceIndex){
+    if (!quantizedResult) return;
+    // Create overlay canvas
+    if (!adjacentPreviewCanvas) {
+        adjacentPreviewCanvas = document.createElement('canvas');
+        adjacentPreviewCanvas.className = 'adjacent-preview';
+        const quantizedBox = elements.quantizedCanvas.parentElement;
+        quantizedBox.style.position = 'relative';
+        quantizedBox.appendChild(adjacentPreviewCanvas);
+    }
+    // Size/position to match quantized canvas
+    adjacentPreviewCanvas.width = elements.quantizedCanvas.width;
+    adjacentPreviewCanvas.height = elements.quantizedCanvas.height;
+    const parentRect = elements.quantizedCanvas.parentElement.getBoundingClientRect();
+    const canvasRect = elements.quantizedCanvas.getBoundingClientRect();
+    adjacentPreviewCanvas.style.left = `${canvasRect.left - parentRect.left}px`;
+    adjacentPreviewCanvas.style.top = `${canvasRect.top - parentRect.top}px`;
+    adjacentPreviewCanvas.style.width = `${canvasRect.width}px`;
+    adjacentPreviewCanvas.style.height = `${canvasRect.height}px`;
+    const ctx = adjacentPreviewCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0,0,adjacentPreviewCanvas.width, adjacentPreviewCanvas.height);
+    const imageData = ctx.createImageData(adjacentPreviewCanvas.width, adjacentPreviewCanvas.height);
+    const data = imageData.data;
+    // Fill blue for sourceIndex (solid)
+    for (let i = 0; i < quantizedResult.assignments.length; i++) {
+        if (quantizedResult.assignments[i] === sourceIndex) {
+            const p = i * 4;
+            data[p] = 0;    // R
+            data[p+1] = 128; // G
+            data[p+2] = 255; // B
+            data[p+3] = 255; // A
+        }
+    }
+    ctx.putImageData(imageData, 0, 0);
+}
+
+function clearAdjacentPreview(){
+    if (adjacentPreviewCanvas && adjacentPreviewCanvas.parentElement) {
+        adjacentPreviewCanvas.parentElement.removeChild(adjacentPreviewCanvas);
+    }
+    adjacentPreviewCanvas = null;
+}
+
+// Draggable confirmation modal for adjacent replacement
+function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'modal draggable';
+    const sourceHex = rgbToHex(quantizedResult.centroids[sourceIndex]);
+    const targetHex = rgbToHex(quantizedResult.centroids[targetIndex]);
+    modal.innerHTML = `
+        <h4>Confirm Adjacent Replace</h4>
+        <div style="margin-bottom:8px;color:#64748b;">Blue pixels shown will be replaced</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:16px;height:16px;border:1px solid #ccc;background:${sourceHex};display:inline-block;"></span>
+                <span>${sourceHex}</span>
+            </span>
+            <span>»</span>
+            <span style="display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:16px;height:16px;border:1px solid #ccc;background:${targetHex};display:inline-block;"></span>
+                <span>${targetHex}</span>
+            </span>
+        </div>
+        <div class="actions">
+            <button id="adj-cancel" class="sort-btn">Cancel</button>
+            <button id="adj-confirm" class="sort-btn active">Confirm</button>
+        </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Make modal draggable by header area
+    let dragging = false; let startX=0, startY=0, origX=0, origY=0;
+    const header = modal.querySelector('h4');
+    const onMove = (e)=>{
+        if (!dragging) return;
+        const dx = e.clientX - startX; const dy = e.clientY - startY;
+        modal.style.transform = `translate(${origX + dx}px, ${origY + dy}px)`;
+    };
+    const onUp = ()=>{ dragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    header.addEventListener('mousedown', (e)=>{
+        dragging = true; startX = e.clientX; startY = e.clientY;
+        const st = getComputedStyle(modal).transform;
+        const m = st && st !== 'none' ? st.match(/matrix\(([^)]+)\)/) : null;
+        if (m) { const parts = m[1].split(','); origX = parseFloat(parts[4])||0; origY = parseFloat(parts[5])||0; } else { origX = 0; origY = 0; }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+
+    overlay.querySelector('#adj-cancel').addEventListener('click', () => {
+        document.body.removeChild(overlay);
+        clearAdjacentPreview();
+    });
+    overlay.querySelector('#adj-confirm').addEventListener('click', () => {
+        document.body.removeChild(overlay);
+        // Perform replacement
+        performReplace(sourceIndex, targetIndex);
+        // Cleanup and reset Adjacent UI state
+        clearAdjacentPreview();
+        ignoredHexes.clear();
+        if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
+        evaluateSurroundingCandidate();
     });
 }
 
@@ -430,6 +666,34 @@ function handleCanvasHover(e) {
     const u = Math.min(Math.max(canvasX / canvas.width, 0), 1);
     const v = Math.min(Math.max(canvasY / canvas.height, 0), 1);
     
+    // Update coord badge (pixel coordinates on quantized canvas)
+    if (elements.coordBadge) {
+        if (e.target === elements.quantizedCanvas) {
+            const px = Math.floor(canvasX);
+            const py = Math.floor(canvasY);
+            elements.coordBadge.textContent = `${px}, ${py}`;
+            elements.coordBadge.style.display = 'block';
+            // Keep badge on-screen and away from cursor
+            const badge = elements.coordBadge;
+            const margin = 10;
+            // First place to bottom-right
+            let left = e.clientX + 14;
+            let top = e.clientY + 14;
+            // Measure badge
+            badge.style.left = `${left}px`;
+            badge.style.top = `${top}px`;
+            const rectB = badge.getBoundingClientRect();
+            // Flip horizontally if overflow right
+            if (rectB.right + margin > window.innerWidth) left = e.clientX - rectB.width - 14;
+            // Flip vertically if overflow bottom
+            if (rectB.bottom + margin > window.innerHeight) top = e.clientY - rectB.height - 14;
+            badge.style.left = `${Math.max(0, left)}px`;
+            badge.style.top = `${Math.max(0, top)}px`;
+        } else {
+            elements.coordBadge.style.display = 'none';
+        }
+    }
+
     // Show magnifier with smart positioning
     if (magnifierActive) {
         elements.magnifier.style.display = 'block';
@@ -481,6 +745,7 @@ function handleCanvasLeave() {
     elements.magnifierOriginal.style.display = 'none';
     elements.crosshairH.style.display = 'none';
     elements.crosshairV.style.display = 'none';
+    if (elements.coordBadge) elements.coordBadge.style.display = 'none';
 }
 
 // Draw magnifier content with red dot cursor and color info
@@ -638,20 +903,24 @@ function drawMagnifierOriginal(u, v) {
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, magnifierSize, magnifierSize);
     
-    // Map normalized coords to original canvas space
+    // Map normalized coords to integer pixel on original canvas
     const ox = Math.floor(u * elements.originalCanvas.width);
     const oy = Math.floor(v * elements.originalCanvas.height);
-    const srcX = ox - sourceSize/2;
-    const srcY = oy - sourceSize/2;
+    // Integer-aligned source window like pixel lens
+    let srcX = Math.floor(ox - sourceSize / 2);
+    let srcY = Math.floor(oy - sourceSize / 2);
+    // Clamp to bounds
+    srcX = Math.max(0, Math.min(srcX, elements.originalCanvas.width - sourceSize));
+    srcY = Math.max(0, Math.min(srcY, elements.originalCanvas.height - sourceSize));
 
-    // Draw original
+    // Draw original window scaled
     ctx.drawImage(
         elements.originalCanvas,
         srcX, srcY, sourceSize, sourceSize,
         0, 0, magnifierSize, magnifierSize
     );
     
-    // Draw grid if enabled
+    // Optional grid
     if (showGrid) {
         ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
         ctx.lineWidth = 1;
@@ -667,12 +936,12 @@ function drawMagnifierOriginal(u, v) {
         ctx.strokeRect(2, 2, magnifierSize - 4, magnifierSize - 4);
     }
     
-    // Red square sized to one smallest grid cell (1 source pixel)
+    // Red square: align exactly to hovered source pixel in this window
     const pxPerSource = magnifierSize / sourceSize;
-    const cellPx = pxPerSource;
+    const localX = (ox - srcX) * pxPerSource;
+    const localY = (oy - srcY) * pxPerSource;
     ctx.fillStyle = 'red';
-    const center = Math.floor(magnifierSize / 2) - Math.floor(cellPx / 2);
-    ctx.fillRect(center, center, Math.ceil(cellPx), Math.ceil(cellPx));
+    ctx.fillRect(Math.floor(localX), Math.floor(localY), Math.ceil(pxPerSource), Math.ceil(pxPerSource));
 }
 
 // Drag and Drop handlers
@@ -1164,8 +1433,10 @@ function displayColorPalette(colors, stats, originalIndices) {
             if (!isActive) return;
             const sw = document.createElement('div');
             sw.className = 'adjacent-swatch';
-            sw.style.background = rgbToHex(item.color);
-            sw.title = `${rgbToHex(item.color)} • ${item.count.toLocaleString()} px`;
+            const hex = rgbToHex(item.color);
+            sw.style.background = hex;
+            sw.setAttribute('data-hex', hex);
+            sw.title = `${hex} • ${item.count.toLocaleString()} px`;
             elements.adjacentTargetOptions.appendChild(sw);
         });
     }

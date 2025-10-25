@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Broadloom Image Converter - v2.9.32</title>
+    <title>Broadloom Image Converter - v2.9.39</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Broadloom Image to Yarn Converter</h1>
-            <div class="version">Version: 2.9.32</div>
+            <div class="version">Version: 2.9.33</div>
         </header>
 
         <div class="main-content">
@@ -129,6 +129,12 @@
                 <div id="adjacent-panel" class="control-section adjacent-panel">
                     <h4 class="section-title">Adjacent</h4>
                     <div id="adjacent-target-options" class="adjacent-mirror"></div>
+                    <div class="adjacent-controls">
+                        <button id="ignore-color-btn" class="sort-btn" disabled>Ignore color</button>
+                        <div id="adjacent-instructions" class="adjacent-instructions"></div>
+                        <div id="ignore-chips" class="ignore-chips"></div>
+                        <button id="replace-surround-btn" class="sort-btn" disabled>Replace by #1 color surround</button>
+                    </div>
                 </div>
 
                 
@@ -147,6 +153,7 @@
                         </div>
                     </div>
                 </div>
+                <div id="coord-badge" class="coord-badge" style="display:none;">(0,0)</div>
             </div>
         </div>
 
