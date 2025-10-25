@@ -3,10 +3,18 @@
 .adjacent-mirror { display:flex; flex-wrap:wrap; gap:6px; }
 .adjacent-swatch { width: 22px; height: 22px; border-radius: 4px; border: 2px solid var(--border); cursor: pointer; }
 .adjacent-swatch.active { outline: 2px solid var(--primary-color); }
-/* Version: 2.9.39 */
+/* Version: 2.9.44 */
+.proof-modal { position: fixed; top: 20px; left: 20px; z-index: 9000; background:#111; color:#fff; font:12px monospace; border-radius:8px; box-shadow: var(--shadow-lg); min-width: 320px; max-width: 60vw; }
+.proof-modal .header { cursor: move; padding:8px 10px; background:#0f172a; border-bottom:1px solid #334155; display:flex; align-items:center; justify-content:space-between; }
+.proof-modal .body { padding:10px; max-height: 60vh; overflow:auto; }
+.proof-modal .close { cursor:pointer; color:#94a3b8; }
+.proof-table { width:100%; border-collapse: collapse; margin-top:6px; }
+.proof-table th, .proof-table td { border-bottom:1px solid #334155; padding:4px 6px; text-align:left; }
+.proof-table th { color:#93c5fd; }
+.proof-table .best { color:#22d3ee; font-weight:700; }
 .adjacent-preview { position:absolute; pointer-events:none; z-index:120; image-rendering: pixelated; }
 .modal.draggable { cursor: move; }
-.coord-badge { position: fixed; z-index: 10000; background: rgba(0,0,0,0.8); color:#fff; font: 12px monospace; padding: 2px 6px; border-radius:4px; pointer-events:none; }
+.coord-badge { position: fixed; z-index: 10000; background: rgba(0,0,0,0.8); color:#fff; font: 12px monospace; padding: 2px 6px; border-radius:4px; pointer-events:none; white-space: nowrap; }
 .adjacent-controls { display:flex; flex-direction: column; gap:8px; margin-top:8px; }
 .adjacent-instructions { font-size: 0.75rem; color: var(--text-secondary); }
 .ignore-chips { display:flex; flex-wrap:wrap; gap:6px; }

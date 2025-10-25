@@ -1,5 +1,5 @@
 // K-means clustering algorithm for color quantization
-// Version: 2.9.27
+// Version: 2.9.41
 
 // Helper: Calculate weighted perceptual distance (prevents black→red merging)
 function colorDistance(c1, c2) {
@@ -255,7 +255,7 @@ let previousMedoids = null;
 let previousKMedoids = null;
 
 // Main K-means clustering function
-function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null, useStable = true) {
+function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null, useStable = true, debugTrace = false) {
     if (pixels.length === 0 || k <= 0) {
         return { centroids: [], assignments: [], iterations: 0, error: 0 };
     }
@@ -289,6 +289,7 @@ function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null, useSta
     let iterations = 0;
     
     // Iterate until convergence or max iterations
+    const centroidsByIter = [];
     for (let iter = 0; iter < maxIterations; iter++) {
         iterations = iter + 1;
         
@@ -330,6 +331,8 @@ function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null, useSta
             }
         }
         
+        // Save snapshot for debug
+        if (debugTrace) centroidsByIter.push(centroids.map(c => [...c]));
         // Report progress
         if (onProgress) {
             onProgress(iter / maxIterations);
@@ -344,7 +347,8 @@ function kmeansQuantize(pixels, k, maxIterations = 20, onProgress = null, useSta
         centroids: centroids,
         assignments: assignments,
         iterations: iterations,
-        error: prevError / pixels.length
+        error: prevError / pixels.length,
+        debug: debugTrace ? { centroidsByIter } : undefined
     };
 }
 
@@ -471,7 +475,7 @@ function resetPreviousCentroids() {
 }
 
 // K-medoids clustering - only uses actual colors from the image
-function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useStable = true) {
+function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useStable = true, debugTrace = false) {
     if (pixels.length === 0 || k <= 0) {
         return { centroids: [], assignments: [], iterations: 0, error: 0 };
     }
@@ -507,6 +511,7 @@ function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useS
     
     // Initialize medoids
     let medoids;
+    const seeds = [];
     
     if (useStable && previousMedoids && previousKMedoids && k > previousKMedoids) {
         // Keep existing medoids and add new ones
@@ -521,12 +526,14 @@ function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useS
         // Initialize using k-medoids++ (similar to k-means++)
         medoids = initializeMedoidsPlusPlus(uniqueColors, k);
     }
+    if (debugTrace) medoids.forEach(m => seeds.push([...m]));
     
     let assignments = new Array(pixels.length);
     let prevError = Infinity;
     let iterations = 0;
     
     // Main iteration loop
+    const medoidsByIter = [];
     for (let iter = 0; iter < maxIterations; iter++) {
         iterations = iter + 1;
         
@@ -580,6 +587,7 @@ function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useS
             }
         }
         
+        if (debugTrace) medoidsByIter.push(medoids.map(m => [...m]));
         if (onProgress) {
             onProgress(iter / maxIterations);
         }
@@ -594,7 +602,8 @@ function kmedoidsQuantize(pixels, k, maxIterations = 20, onProgress = null, useS
         assignments: assignments,
         iterations: iterations,
         error: prevError / pixels.length,
-        isActualColors: true
+        isActualColors: true,
+        debug: debugTrace ? { seeds, medoidsByIter } : undefined
     };
 }
 
@@ -735,7 +744,7 @@ function applyQuantization(imageData, centroids, assignments) {
 }
 
 // Quantize image using all pixels for final mapping
-function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStable = true, useActualColors = true) {
+function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStable = true, useActualColors = true, debugTrace = false) {
     // Preserve previous run for stable K reduction merge behavior
     const prev = lastQuantization && Array.isArray(lastQuantization.assignments) ? lastQuantization : null;
 
@@ -745,9 +754,9 @@ function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStab
     // Choose algorithm: K-medoids (actual colors) or K-means (average colors)
     let result;
     if (useActualColors) {
-        result = kmedoidsQuantize(sampledPixels, k, 20, onProgress, useStable);
+        result = kmedoidsQuantize(sampledPixels, k, 20, onProgress, useStable, debugTrace);
     } else {
-        result = kmeansQuantize(sampledPixels, k, 20, onProgress, useStable);
+        result = kmeansQuantize(sampledPixels, k, 20, onProgress, useStable, debugTrace);
     }
     
     let centroids = result.centroids;
@@ -797,7 +806,8 @@ function quantizeImage(imageData, k, sampleRate = 10, onProgress = null, useStab
         quantizedData: quantizedData,
         centroids: centroids,
         assignments: assignments,
-        isActualColors: result.isActualColors || false
+        isActualColors: result.isActualColors || false,
+        debug: result.debug
     };
 }
 

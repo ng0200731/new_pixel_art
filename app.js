@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.39
+// Version: 2.9.44
 
-const VERSION = '2.9.39';
+const VERSION = '2.9.44';
 
 // Global state
 let originalImage = null;
@@ -51,6 +51,7 @@ const elements = {
     crosshairH: document.getElementById('crosshair-horizontal'),
     crosshairV: document.getElementById('crosshair-vertical'),
     coordBadge: document.getElementById('coord-badge'),
+    proofBadge: document.getElementById('proof-badge'),
     kInfo: document.getElementById('k-info'),
     prosList: document.getElementById('pros-list'),
     consList: document.getElementById('cons-list'),
@@ -58,6 +59,8 @@ const elements = {
     paletteRows: document.getElementById('palette-rows'),
     sortBrightness: document.getElementById('sort-brightness'),
     sortPixels: document.getElementById('sort-pixels'),
+    autoK: document.getElementById('auto-k'),
+    autoKNote: document.getElementById('auto-k-note'),
     replaceButton: document.getElementById('replace-color-btn'),
     replaceInstructions: document.getElementById('replace-instructions'),
     imageInfo: document.getElementById('image-info'),
@@ -104,6 +107,17 @@ function initializeEventListeners() {
     // K value controls
     elements.kMinus.addEventListener('click', () => adjustK(-1));
     elements.kPlus.addEventListener('click', () => adjustK(1));
+    // Auto K toggle
+    elements.autoK?.addEventListener('change', ()=>{
+        const on = elements.autoK.checked;
+        elements.kMinus.disabled = on;
+        elements.kPlus.disabled = on;
+        if (on && originalImage && currentImageData) {
+            estimateAndSetAutoK();
+        } else if (!on) {
+            elements.autoKNote.textContent = '';
+        }
+    });
     
     // Action buttons
     elements.convertBtn.addEventListener('click', convertImage);
@@ -177,6 +191,17 @@ function initializeEventListeners() {
     elements.quantizedCanvas.addEventListener('mouseenter', () => magnifierActive = true);
     elements.originalCanvas.addEventListener('mouseleave', handleCanvasLeave);
     elements.quantizedCanvas.addEventListener('mouseleave', handleCanvasLeave);
+    // Right-click to open proof popup at current cursor
+    elements.quantizedCanvas.addEventListener('contextmenu', (e)=>{
+        e.preventDefault();
+        openProofPopup(e.clientX, e.clientY);
+    });
+
+    // Right-click on "Original" canvas: show palette selection proof (K build) at current pixel
+    elements.originalCanvas.addEventListener('contextmenu', (e)=>{
+        e.preventDefault();
+        openPaletteProofPopup(e.clientX, e.clientY);
+    });
     
     // Shift key to toggle highlight on/off (preserve selected color)
     document.addEventListener('keydown', (e) => {
@@ -694,6 +719,49 @@ function handleCanvasHover(e) {
         }
     }
 
+    // Update proof badge: show RGB, assigned centroid, nearest centroid (by current metric)
+    if (elements.proofBadge && e.target === elements.quantizedCanvas && currentImageData && quantizedResult) {
+        const px = Math.floor(canvasX);
+        const py = Math.floor(canvasY);
+        const idx = (py * currentImageData.width + px) * 4;
+        if (idx >= 0 && idx + 2 < currentImageData.data.length) {
+            const r = currentImageData.data[idx];
+            const g = currentImageData.data[idx+1];
+            const b = currentImageData.data[idx+2];
+            const assignedIndex = quantizedResult.assignments[py * currentImageData.width + px];
+            const assignedHex = rgbToHex(quantizedResult.centroids[assignedIndex] || [0,0,0]);
+            const assignedDist = colorDistance([r,g,b], quantizedResult.centroids[assignedIndex] || [0,0,0]);
+
+            const nearest = findClosestCentroid([r,g,b], quantizedResult.centroids);
+            const nearestHex = rgbToHex(quantizedResult.centroids[nearest.index] || [0,0,0]);
+            const nearestDist = nearest.distance;
+
+            // Optional two specific references
+            const ref1 = [0x7c,0x7f,0x84];
+            const ref2 = [0xac,0x5b,0x62];
+            const dRef1 = colorDistance([r,g,b], ref1);
+            const dRef2 = colorDistance([r,g,b], ref2);
+
+            const match = assignedIndex === nearest.index ? '✓' : '✗';
+            elements.proofBadge.textContent = `RGB(${r},${g},${b}) assigned ${assignedHex} d=${assignedDist.toFixed(2)} | nearest ${nearestHex} d=${nearestDist.toFixed(2)} ${match} | d(#7c7f84)=${dRef1.toFixed(2)} d(#ac5b62)=${dRef2.toFixed(2)}`;
+            elements.proofBadge.style.display = 'block';
+            // Position similar to coord badge, but stacked slightly below
+            const badge = elements.proofBadge;
+            const margin = 10;
+            let left = e.clientX + 14;
+            let top = e.clientY + 34; // below coord badge
+            badge.style.left = `${left}px`;
+            badge.style.top = `${top}px`;
+            const rectB = badge.getBoundingClientRect();
+            if (rectB.right + margin > window.innerWidth) left = e.clientX - rectB.width - 14;
+            if (rectB.bottom + margin > window.innerHeight) top = e.clientY - rectB.height - 14;
+            badge.style.left = `${Math.max(0, left)}px`;
+            badge.style.top = `${Math.max(0, top)}px`;
+        }
+    } else if (elements.proofBadge && e.type === 'mouseleave') {
+        elements.proofBadge.style.display = 'none';
+    }
+
     // Show magnifier with smart positioning
     if (magnifierActive) {
         elements.magnifier.style.display = 'block';
@@ -746,6 +814,93 @@ function handleCanvasLeave() {
     elements.crosshairH.style.display = 'none';
     elements.crosshairV.style.display = 'none';
     if (elements.coordBadge) elements.coordBadge.style.display = 'none';
+    if (elements.proofBadge) elements.proofBadge.style.display = 'none';
+}
+
+// Build a draggable proof popup showing distances for the current hovered pixel
+function openProofPopup(clientX, clientY){
+    if (!quantizedResult || !currentImageData) return;
+    const rect = elements.quantizedCanvas.getBoundingClientRect();
+    const px = Math.floor((clientX - rect.left) * elements.quantizedCanvas.width / rect.width);
+    const py = Math.floor((clientY - rect.top) * elements.quantizedCanvas.height / rect.height);
+    if (px < 0 || py < 0 || px >= currentImageData.width || py >= currentImageData.height) return;
+    const idx = (py * currentImageData.width + px) * 4;
+    const p = [currentImageData.data[idx], currentImageData.data[idx+1], currentImageData.data[idx+2]];
+    const assignedIndex = quantizedResult.assignments[py * currentImageData.width + px];
+    const assigned = quantizedResult.centroids[assignedIndex] || [0,0,0];
+    const nearest = findClosestCentroid(p, quantizedResult.centroids);
+    const rows = quantizedResult.centroids.map((c,i)=>({hex: rgbToHex(c), d: colorDistance(p,c), i})).sort((a,b)=>a.d-b.d);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'proof-modal';
+    modal.style.left = Math.max(10, clientX - 200) + 'px';
+    modal.style.top = Math.max(10, clientY + 10) + 'px';
+    modal.innerHTML = `
+      <div class="header"><span>Proof @ (${px}, ${py})</span><span class="close">✕</span></div>
+      <div class="body">
+        <div>RGB(${p[0]},${p[1]},${p[2]})</div>
+        <div>Assigned: <b>${rgbToHex(assigned)}</b> d=${colorDistance(p,assigned).toFixed(2)}</div>
+        <div>Nearest: <b>${rgbToHex(quantizedResult.centroids[nearest.index])}</b> d=${nearest.distance.toFixed(2)} ${assignedIndex===nearest.index?'✓':'✗'}</div>
+        <table class="proof-table"><thead><tr><th>#</th><th>Hex</th><th>Distance</th></tr></thead><tbody>
+          ${rows.map((r,idx)=>`<tr class="${idx===0?'best':''}"><td>${r.i}</td><td>${r.hex}</td><td>${r.d.toFixed(2)}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    overlay.querySelector('.close').addEventListener('click', ()=>document.body.removeChild(overlay));
+    overlay.addEventListener('click', (e)=>{ if (e.target===overlay) document.body.removeChild(overlay); });
+    // Drag
+    const header = modal.querySelector('.header');
+    let dragging=false,sx=0,sy=0,ox=0,oy=0;
+    header.addEventListener('mousedown',(e)=>{ dragging=true; sx=e.clientX; sy=e.clientY; const st=getComputedStyle(modal); ox=parseInt(st.left)||0; oy=parseInt(st.top)||0; document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp); });
+    function onMove(e){ if(!dragging) return; modal.style.left = (ox + e.clientX - sx) + 'px'; modal.style.top = (oy + e.clientY - sy) + 'px'; }
+    function onUp(){ dragging=false; document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); }
+}
+
+// Show how a medoid like #7c7f84 was selected: distances from the pixel to all current medoids
+// and the seed/iteration snapshots if available (from trace)
+function openPaletteProofPopup(clientX, clientY){
+    if (!quantizedResult || !currentImageData) return;
+    const rect = elements.originalCanvas.getBoundingClientRect();
+    const px = Math.floor((clientX - rect.left) * elements.originalCanvas.width / rect.width);
+    const py = Math.floor((clientY - rect.top) * elements.originalCanvas.height / rect.height);
+    if (px < 0 || py < 0 || px >= currentImageData.width || py >= currentImageData.height) return;
+    const idx = (py * currentImageData.width + px) * 4;
+    const p = [currentImageData.data[idx], currentImageData.data[idx+1], currentImageData.data[idx+2]];
+    const nearest = findClosestCentroid(p, quantizedResult.centroids);
+    const rows = quantizedResult.centroids.map((c,i)=>({hex: rgbToHex(c), d: colorDistance(p,c), i})).sort((a,b)=>a.d-b.d);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'proof-modal';
+    modal.style.left = Math.max(10, clientX - 200) + 'px';
+    modal.style.top = Math.max(10, clientY + 10) + 'px';
+    const trace = (quantizedResult && quantizedResult.debug) ? quantizedResult.debug : null;
+    modal.innerHTML = `
+      <div class="header"><span>K palette proof @ (${px}, ${py})</span><span class="close">✕</span></div>
+      <div class="body">
+        <div>RGB(${p[0]},${p[1]},${p[2]})</div>
+        <div>Nearest current medoid: <b>${rgbToHex(quantizedResult.centroids[nearest.index])}</b> d=${nearest.distance.toFixed(2)}</div>
+        ${trace && trace.seeds ? `<div style='margin-top:6px;'>Seeds (initial medoids): ${trace.seeds.map(c=>rgbToHex(c)).join(', ')}</div>` : ''}
+        ${trace && (trace.medoidsByIter||trace.centroidsByIter) ? `<div style='margin-top:6px;'>Iterations: ${(trace.medoidsByIter||trace.centroidsByIter).length}</div>` : ''}
+        <table class="proof-table"><thead><tr><th>#</th><th>Hex</th><th>Distance</th></tr></thead><tbody>
+          ${rows.map((r,idx)=>`<tr class="${idx===0?'best':''}"><td>${r.i}</td><td>${r.hex}</td><td>${r.d.toFixed(2)}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    overlay.querySelector('.close').addEventListener('click', ()=>document.body.removeChild(overlay));
+    overlay.addEventListener('click', (e)=>{ if (e.target===overlay) document.body.removeChild(overlay); });
+    const header = modal.querySelector('.header');
+    let dragging=false,sx=0,sy=0,ox=0,oy=0;
+    header.addEventListener('mousedown',(e)=>{ dragging=true; sx=e.clientX; sy=e.clientY; const st=getComputedStyle(modal); ox=parseInt(st.left)||0; oy=parseInt(st.top)||0; document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp); });
+    function onMove(e){ if(!dragging) return; modal.style.left = (ox + e.clientX - sx) + 'px'; modal.style.top = (oy + e.clientY - sy) + 'px'; }
+    function onUp(){ dragging=false; document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); }
 }
 
 // Draw magnifier content with red dot cursor and color info
@@ -1234,8 +1389,18 @@ async function convertImage() {
         if (totalPixels > 500000) sampleRate = 10;
         else if (totalPixels > 100000) sampleRate = 5;
         
+        // If Auto K is enabled, estimate the best K before quantization
+        if (elements.autoK && elements.autoK.checked) {
+            const kRecommended = estimateAutoK(currentImageData);
+            currentK = kRecommended;
+            elements.kValue.textContent = currentK;
+            elements.currentK.textContent = currentK;
+        }
+
         // Run quantization with stable mode and actual colors option
         const useActualColors = elements.useActualColorsCheckbox ? elements.useActualColorsCheckbox.checked : true;
+        // Enable debug trace when holding T while clicking Convert, or always true for now
+        const debugTrace = true;
         quantizedResult = quantizeImage(
             currentImageData, 
             currentK, 
@@ -1244,7 +1409,8 @@ async function convertImage() {
                 elements.progressFill.style.width = `${progress * 100}%`;
             },
             true, // Use stable mode
-            useActualColors // Use actual colors from image (K-medoids)
+            useActualColors, // Use actual colors from image (K-medoids)
+            debugTrace
         );
         
         // Display quantized image
@@ -1275,7 +1441,8 @@ async function convertImage() {
         console.log('Conversion complete:', {
             k: currentK,
             centroids: quantizedResult.centroids.length,
-            isActualColors: quantizedResult.isActualColors
+            isActualColors: quantizedResult.isActualColors,
+            debug: quantizedResult.debug
         });
         
         } catch (error) {
@@ -1598,4 +1765,81 @@ document.addEventListener('DOMContentLoaded', function() {
     // Set initial button states
     elements.kMinus.disabled = currentK <= 2;
     elements.kPlus.disabled = currentK >= 16;
+
+    // Debug: press 'T' to print medoids/centroids and hovered pixel distances
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 't') {
+            if (!quantizedResult || !currentImageData) { console.log('No quantization yet.'); return; }
+            const cx = Math.floor((lastMouseX - elements.quantizedCanvas.getBoundingClientRect().left) * elements.quantizedCanvas.width / elements.quantizedCanvas.getBoundingClientRect().width);
+            const cy = Math.floor((lastMouseY - elements.quantizedCanvas.getBoundingClientRect().top) * elements.quantizedCanvas.height / elements.quantizedCanvas.getBoundingClientRect().height);
+            const idx = (cy * currentImageData.width + cx) * 4;
+            if (idx < 0 || idx + 2 >= currentImageData.data.length) { console.log('Out of bounds'); return; }
+            const p = [currentImageData.data[idx], currentImageData.data[idx+1], currentImageData.data[idx+2]];
+            const dists = quantizedResult.centroids.map((c,i)=>({ i, hex: rgbToHex(c), d: colorDistance(p,c) })).sort((a,b)=>a.d-b.d);
+            console.table(dists);
+            if (quantizedResult.debug) {
+                console.log('Seeds/Initial medoids/centroids:', quantizedResult.debug.seeds || '(n/a)');
+                console.log('Medoids/Centroids by iteration:', quantizedResult.debug.medoidsByIter || quantizedResult.debug.centroidsByIter || '(n/a)');
+            }
+        }
+    });
+
+    // If auto-k is on by default, disable +/-
+    if (elements.autoK && elements.autoK.checked) {
+        elements.kMinus.disabled = true;
+        elements.kPlus.disabled = true;
+    }
 });
+
+// Estimate best K using elbow on weighted error over a sweep
+function estimateAutoK(imageData){
+    const sweepKs = [3,4,5,6,7,8,9,10,11,12,13,14,15,16];
+    const useActualColors = elements.useActualColorsCheckbox ? elements.useActualColorsCheckbox.checked : true;
+    // Use a heavier sample for stability but keep fast
+    const sampleRate = imageData.width * imageData.height > 500000 ? 20 : 10;
+    const errors = [];
+    for (const k of sweepKs) {
+        const res = quantizeImage(imageData, k, sampleRate, null, true, useActualColors, false);
+        // Approximate error = mean distance per sampled pixel cluster step already in result.error when K-means; for medoids we recompute
+        let err = 0;
+        if (res.debug && res.debug.error != null) {
+            err = res.debug.error;
+        } else {
+            // Compute average colorDistance across full image to its assigned centroid (cheap pass)
+            const cents = res.centroids;
+            let acc = 0; const data = imageData.data; const w = imageData.width; const h = imageData.height;
+            for (let y=0; y<h; y+=Math.max(1, Math.floor(h/200))) {
+                for (let x=0; x<w; x+=Math.max(1, Math.floor(w/200))) {
+                    const i = (y*w + x) * 4;
+                    const p = [data[i], data[i+1], data[i+2]];
+                    const { distance } = findClosestCentroid(p, cents);
+                    acc += distance;
+                }
+            }
+            err = acc;
+        }
+        errors.push({ k, err });
+    }
+    // Normalize and find elbow via simple knee: largest drop then diminishing returns
+    errors.sort((a,b)=>a.k-b.k);
+    let bestK = errors[0].k;
+    let bestGain = -Infinity;
+    for (let i=1;i<errors.length;i++){
+        const drop = errors[i-1].err - errors[i].err; // positive if error decreases
+        const rel = drop / (errors[i-1].err || 1);
+        if (rel > bestGain) { bestGain = rel; bestK = errors[i].k; }
+    }
+    // Smooth rule: pick smallest K where additional drop < 5% compared to previous
+    for (let i=2;i<errors.length;i++){
+        const prevDrop = errors[i-2].err - errors[i-1].err;
+        const thisDrop = errors[i-1].err - errors[i].err;
+        if (thisDrop / (prevDrop||1) < 0.2) { bestK = errors[i-1].k; break; }
+    }
+    if (elements.autoKNote) {
+        const baseline = errors.find(e=>e.k===errors[0].k).err;
+        const sel = errors.find(e=>e.k===bestK).err;
+        const gain = ((baseline - sel)/baseline*100).toFixed(1);
+        elements.autoKNote.textContent = `Recommended K = ${bestK} (elbow). Error reduced ~${gain}% from K=${errors[0].k}.`;
+    }
+    return bestK;
+}

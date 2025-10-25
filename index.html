@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Broadloom Image Converter - v2.9.39</title>
+    <title>Broadloom Image Converter - v2.9.44</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Broadloom Image to Yarn Converter</h1>
-            <div class="version">Version: 2.9.33</div>
+            <div class="version">Version: 2.9.44</div>
         </header>
 
         <div class="main-content">
@@ -98,6 +98,11 @@
                         <button id="k-plus" class="k-button">+</button>
                     </div>
                     <div class="k-range">Min: 2 | Max: 16</div>
+                    <label class="checkbox-option" style="margin-top:8px;">
+                        <input type="checkbox" id="auto-k" name="auto-k">
+                        <span class="checkbox-label">Auto K (recommend best K)</span>
+                    </label>
+                    <div id="auto-k-note" class="recommendation"></div>
                 </div>
 
                 <div class="control-section action-buttons">
@@ -154,6 +159,7 @@
                     </div>
                 </div>
                 <div id="coord-badge" class="coord-badge" style="display:none;">(0,0)</div>
+                <div id="proof-badge" class="coord-badge" style="display:none;">proof</div>
             </div>
         </div>
 
