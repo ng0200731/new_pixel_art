@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.46
+// Version: 2.9.47
 
-const VERSION = '2.9.46';
+const VERSION = '2.9.47';
 
 // Global state
 let originalImage = null;
@@ -1649,9 +1649,11 @@ function displayColorPalette(colors, stats, originalIndices) {
     // Render Adjacent mirror: active colors only (count > 0 and not replaced), same order
     if (elements.adjacentTargetOptions) {
         elements.adjacentTargetOptions.innerHTML = '';
+        let adjacentCount = 0;
         sortedData.forEach(item => {
             const isActive = item.count > 0 && !replacedColors.has(item.originalIndex);
             if (!isActive) return;
+            adjacentCount++;
             const sw = document.createElement('div');
             sw.className = 'adjacent-swatch';
             const hex = rgbToHex(item.color);
@@ -1660,6 +1662,14 @@ function displayColorPalette(colors, stats, originalIndices) {
             sw.title = `${hex} • ${item.count.toLocaleString()} px`;
             elements.adjacentTargetOptions.appendChild(sw);
         });
+        // Update header to show count e.g., "Adjacent (1 color)"
+        if (elements.adjacentPanel) {
+            const titleEl = elements.adjacentPanel.querySelector('h4.section-title');
+            if (titleEl) {
+                const label = adjacentCount === 1 ? 'color' : 'colors';
+                titleEl.textContent = `Adjacent (${adjacentCount} ${label})`;
+            }
+        }
     }
 }
 
