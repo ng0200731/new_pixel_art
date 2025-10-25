@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.44
+// Version: 2.9.45
 
-const VERSION = '2.9.44';
+const VERSION = '2.9.45';
 
 // Global state
 let originalImage = null;
@@ -232,7 +232,9 @@ function findColorIndexByHex(hex){
 
 let ignorePickActive = false;
 let ignoredHexes = new Set();
-let surroundCandidateIndex = null;
+let surroundCandidateIndex = null; // legacy global mode (kept for compatibility)
+let perPixelSurroundTargets = null; // Array<number> mapping pixel index -> target color index, or -1 if none
+let perPixelReplacementCount = 0;
 let adjacentPreviewCanvas = null;
 function addIgnoreChip(hex){
     if (!elements.ignoreChips) return;
@@ -252,7 +254,10 @@ function addIgnoreChip(hex){
 
 // Determine if selected color is surrounded by exactly one other color (4-neighbors) after ignoring picks
 function evaluateSurroundingCandidate(){
-    surroundCandidateIndex = null;
+    // Compute per-pixel unique-surround targets for the locked color
+    surroundCandidateIndex = null; // not used in per-pixel mode
+    perPixelSurroundTargets = null;
+    perPixelReplacementCount = 0;
     if (!quantizedResult || !currentImageData || lockedColorIndex == null) {
         if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
         return;
@@ -260,32 +265,34 @@ function evaluateSurroundingCandidate(){
     const width = currentImageData.width;
     const height = currentImageData.height;
     const assignments = quantizedResult.assignments;
-    const neighborSet = new Set();
+    const total = width * height;
+    const out = new Int32Array(total);
+    out.fill(-1);
     // Map ignored hexes to indices once
     const ignoredIdx = new Set();
     ignoredHexes.forEach(h => {
         const idx = findColorIndexByHex(h);
         if (idx != null) ignoredIdx.add(idx);
     });
-    for (let y = 0; y < height; y++) {
-        const rowBase = y * width;
-        for (let x = 0; x < width; x++) {
-            const i = rowBase + x;
-            if (assignments[i] !== lockedColorIndex) continue;
-            if (x > 0) neighborSet.add(assignments[i-1]);
-            if (x+1 < width) neighborSet.add(assignments[i+1]);
-            if (y > 0) neighborSet.add(assignments[i-width]);
-            if (y+1 < height) neighborSet.add(assignments[i+width]);
-        }
+    function uniqueNeighborTarget(i){
+        const x = i % width; const y = (i - x) / width;
+        const candidates = new Set();
+        if (x > 0) candidates.add(assignments[i-1]);
+        if (x+1 < width) candidates.add(assignments[i+1]);
+        if (y > 0) candidates.add(assignments[i-width]);
+        if (y+1 < height) candidates.add(assignments[i+width]);
+        candidates.delete(lockedColorIndex);
+        ignoredIdx.forEach(idx => candidates.delete(idx));
+        if (candidates.size === 1) return [...candidates][0];
+        return -1;
     }
-    neighborSet.delete(lockedColorIndex);
-    ignoredIdx.forEach(idx => neighborSet.delete(idx));
-    if (neighborSet.size === 1) {
-        surroundCandidateIndex = [...neighborSet][0];
-        if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = false;
-    } else {
-        if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+    for (let i=0;i<total;i++){
+        if (assignments[i] !== lockedColorIndex) continue;
+        const t = uniqueNeighborTarget(i);
+        if (t !== -1) { out[i] = t; perPixelReplacementCount++; }
     }
+    perPixelSurroundTargets = out;
+    if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = perPixelReplacementCount === 0;
 }
 
 // Blue preview overlay for the pixels of the selected color
@@ -313,15 +320,17 @@ function drawAdjacentPreview(sourceIndex){
     ctx.clearRect(0,0,adjacentPreviewCanvas.width, adjacentPreviewCanvas.height);
     const imageData = ctx.createImageData(adjacentPreviewCanvas.width, adjacentPreviewCanvas.height);
     const data = imageData.data;
-    // Fill blue for sourceIndex (solid)
-    for (let i = 0; i < quantizedResult.assignments.length; i++) {
-        if (quantizedResult.assignments[i] === sourceIndex) {
-            const p = i * 4;
-            data[p] = 0;    // R
-            data[p+1] = 128; // G
-            data[p+2] = 255; // B
-            data[p+3] = 255; // A
-        }
+    const total = quantizedResult.assignments.length;
+    const useMask = perPixelSurroundTargets && perPixelReplacementCount > 0;
+    for (let i = 0; i < total; i++) {
+        const isSource = quantizedResult.assignments[i] === sourceIndex;
+        const shouldColor = useMask ? (perPixelSurroundTargets[i] !== -1) : isSource;
+        if (!shouldColor) continue;
+        const p = i * 4;
+        data[p] = 0;    // R
+        data[p+1] = 128; // G
+        data[p+2] = 255; // B
+        data[p+3] = 255; // A
     }
     ctx.putImageData(imageData, 0, 0);
 }
@@ -340,21 +349,30 @@ function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
     const modal = document.createElement('div');
     modal.className = 'modal draggable';
     const sourceHex = rgbToHex(quantizedResult.centroids[sourceIndex]);
-    const targetHex = rgbToHex(quantizedResult.centroids[targetIndex]);
+    // Build summary of target colors (per-pixel mode)
+    const counts = {};
+    if (perPixelSurroundTargets && perPixelReplacementCount>0){
+        for (let i=0;i<perPixelSurroundTargets.length;i++){
+            const t = perPixelSurroundTargets[i];
+            if (t === -1) continue;
+            const hex = rgbToHex(quantizedResult.centroids[t]);
+            counts[hex] = (counts[hex]||0) + 1;
+        }
+    }
+    const rows = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6)
+        .map(([hex,cnt])=>`<div style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:16px;border:1px solid #ccc;background:${hex};display:inline-block;"></span><span>${hex}</span><span style="color:#64748b;">${cnt.toLocaleString()} px</span></div>`).join('');
     modal.innerHTML = `
         <h4>Confirm Adjacent Replace</h4>
-        <div style="margin-bottom:8px;color:#64748b;">Blue pixels shown will be replaced</div>
+        <div style="margin-bottom:8px;color:#64748b;">Blue pixels will be replaced by their single 4-neighbor color (after ignores).</div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
             <span style="display:inline-flex;align-items:center;gap:6px;">
                 <span style="width:16px;height:16px;border:1px solid #ccc;background:${sourceHex};display:inline-block;"></span>
                 <span>${sourceHex}</span>
             </span>
             <span>»</span>
-            <span style="display:inline-flex;align-items:center;gap:6px;">
-                <span style="width:16px;height:16px;border:1px solid #ccc;background:${targetHex};display:inline-block;"></span>
-                <span>${targetHex}</span>
-            </span>
+            <span>${perPixelReplacementCount.toLocaleString()} pixel(s) across ${Object.keys(counts).length} color(s)</span>
         </div>
+        ${rows ? `<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-bottom:8px;">${rows}</div>` : ''}
         <div class="actions">
             <button id="adj-cancel" class="sort-btn">Cancel</button>
             <button id="adj-confirm" class="sort-btn active">Confirm</button>
@@ -387,14 +405,40 @@ function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
     });
     overlay.querySelector('#adj-confirm').addEventListener('click', () => {
         document.body.removeChild(overlay);
-        // Perform replacement
-        performReplace(sourceIndex, targetIndex);
+        // Perform per-pixel replacement
+        performPerPixelReplace();
         // Cleanup and reset Adjacent UI state
         clearAdjacentPreview();
         ignoredHexes.clear();
         if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
         evaluateSurroundingCandidate();
+        // Clear yellow highlight state
+        highlightLocked = false;
+        lockedColorIndex = null;
+        clearHighlight();
     });
+}
+
+// Execute per-pixel replacements using precomputed perPixelSurroundTargets
+function performPerPixelReplace(){
+    if (!quantizedResult || !perPixelSurroundTargets) return;
+    const assignments = quantizedResult.assignments;
+    for (let i=0;i<assignments.length;i++){
+        const t = perPixelSurroundTargets[i];
+        if (t !== -1) assignments[i] = t;
+    }
+    // Redraw and update palette/stats
+    const img = applyQuantization(currentImageData, quantizedResult.centroids, assignments);
+    const ctx = elements.quantizedCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.putImageData(img, 0, 0);
+    const stats = calculateColorStats(assignments, quantizedResult.centroids.length);
+    colorData = { colors: quantizedResult.centroids, stats, originalIndices: quantizedResult.centroids.map((_,i)=>i) };
+    displayColorPalette(colorData.colors, stats, colorData.originalIndices);
+    if (elements.activeColorCount) {
+        const totalActive = stats.counts.reduce((acc, c, i) => acc + ((c > 0 && !replacedColors.has(i)) ? 1 : 0), 0);
+        elements.activeColorCount.textContent = `(${totalActive} active)`;
+    }
 }
 
 // Toggle grid overlay
