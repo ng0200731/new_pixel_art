@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.45
+// Version: 2.9.46
 
-const VERSION = '2.9.45';
+const VERSION = '2.9.46';
 
 // Global state
 let originalImage = null;
@@ -175,13 +175,12 @@ function initializeEventListeners() {
     });
 
     elements.replaceSurroundBtn?.addEventListener('click', () => {
-        if (lockedColorIndex == null || surroundCandidateIndex == null) return;
+        if (lockedColorIndex == null) return;
         const sourceIndex = lockedColorIndex;
-        const targetIndex = surroundCandidateIndex;
-        // Draw blue preview for pixels to be replaced
+        // Draw blue preview for pixels to be replaced (may be zero)
         drawAdjacentPreview(sourceIndex);
-        // Show draggable confirmation
-        showAdjacentReplaceConfirm(sourceIndex, targetIndex);
+        // Show draggable confirmation (confirm disabled if zero)
+        showAdjacentReplaceConfirm(sourceIndex, null);
     });
     
     // Canvas hover events for magnifier and crosshairs
@@ -292,7 +291,8 @@ function evaluateSurroundingCandidate(){
         if (t !== -1) { out[i] = t; perPixelReplacementCount++; }
     }
     perPixelSurroundTargets = out;
-    if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = perPixelReplacementCount === 0;
+    // Button is enabled to allow viewing the popup even when zero; confirmation will be disabled when zero
+    if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = false;
 }
 
 // Blue preview overlay for the pixels of the selected color
@@ -349,18 +349,25 @@ function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
     const modal = document.createElement('div');
     modal.className = 'modal draggable';
     const sourceHex = rgbToHex(quantizedResult.centroids[sourceIndex]);
-    // Build summary of target colors (per-pixel mode)
+    // Build summary and coordinate lists of target colors (per-pixel mode)
     const counts = {};
-    if (perPixelSurroundTargets && perPixelReplacementCount>0){
+    const coordGroups = {};
+    const w = currentImageData.width;
+    if (perPixelSurroundTargets){
         for (let i=0;i<perPixelSurroundTargets.length;i++){
             const t = perPixelSurroundTargets[i];
             if (t === -1) continue;
             const hex = rgbToHex(quantizedResult.centroids[t]);
             counts[hex] = (counts[hex]||0) + 1;
+            if (!coordGroups[hex]) coordGroups[hex] = [];
+            const x = i % w; const y = (i - x) / w;
+            coordGroups[hex].push(`${x}, ${y}`);
         }
     }
-    const rows = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6)
+    const rows = Object.entries(counts).sort((a,b)=>b[1]-a[1])
         .map(([hex,cnt])=>`<div style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:16px;border:1px solid #ccc;background:${hex};display:inline-block;"></span><span>${hex}</span><span style="color:#64748b;">${cnt.toLocaleString()} px</span></div>`).join('');
+    const coordSections = Object.entries(coordGroups).sort((a,b)=>b[1].length - a[1].length)
+        .map(([hex,list])=>`<div style="margin-bottom:8px;"><div style="font-weight:600;">${hex} (${list.length} px)</div><div style="font-family:monospace;white-space:pre-wrap;word-break:break-word;">${list.join('; ')}</div></div>`).join('');
     modal.innerHTML = `
         <h4>Confirm Adjacent Replace</h4>
         <div style="margin-bottom:8px;color:#64748b;">Blue pixels will be replaced by their single 4-neighbor color (after ignores).</div>
@@ -372,10 +379,13 @@ function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
             <span>»</span>
             <span>${perPixelReplacementCount.toLocaleString()} pixel(s) across ${Object.keys(counts).length} color(s)</span>
         </div>
-        ${rows ? `<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-bottom:8px;">${rows}</div>` : ''}
+        <div style="display:grid;grid-template-columns:1fr;gap:6px;margin-bottom:8px;">${rows || '<div style=\"color:#64748b;\">0 color(s)</div>'}</div>
+        <div style="max-height:260px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;padding:8px;margin-bottom:8px;">
+            ${coordSections || '<div style=\"color:#64748b;font-style:italic;\">0 pixel(s)</div>'}
+        </div>
         <div class="actions">
             <button id="adj-cancel" class="sort-btn">Cancel</button>
-            <button id="adj-confirm" class="sort-btn active">Confirm</button>
+            <button id="adj-confirm" class="sort-btn active" ${perPixelReplacementCount===0?'disabled':''}>Confirm</button>
         </div>
     `;
     overlay.appendChild(modal);

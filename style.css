@@ -3,7 +3,7 @@
 .adjacent-mirror { display:flex; flex-wrap:wrap; gap:6px; }
 .adjacent-swatch { width: 22px; height: 22px; border-radius: 4px; border: 2px solid var(--border); cursor: pointer; }
 .adjacent-swatch.active { outline: 2px solid var(--primary-color); }
-/* Version: 2.9.45 */
+/* Version: 2.9.46 */
 .proof-modal { position: fixed; top: 20px; left: 20px; z-index: 9000; background:#111; color:#fff; font:12px monospace; border-radius:8px; box-shadow: var(--shadow-lg); min-width: 320px; max-width: 60vw; }
 .proof-modal .header { cursor: move; padding:8px 10px; background:#0f172a; border-bottom:1px solid #334155; display:flex; align-items:center; justify-content:space-between; }
 .proof-modal .body { padding:10px; max-height: 60vh; overflow:auto; }
