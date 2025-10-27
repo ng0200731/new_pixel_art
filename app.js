@@ -25,6 +25,10 @@ let lastMouseY = 0;
 let lastPixelX = -1; // track cursor position in image pixel coordinates
 let lastPixelY = -1;
 let isSyntheticMove = false; // flag to prevent updating pixel coords on keyboard-generated moves
+let findModeActive = false; // whether we're in find/navigate mode
+let findColorIndex = null; // which color we're finding
+let findPixelLocations = []; // array of {x, y} for current color
+let findCurrentIndex = 0; // which pixel we're viewing (0-based)
 let replaceMode = false; // whether we are selecting colors to replace
 let replaceSourceIndex = null; // first chosen color (to be replaced)
 let replacedColors = new Set(); // palette indices marked as replaced (show red strip)
@@ -338,6 +342,93 @@ function findColorIndexByHex(hex){
         if (rgbToHex(quantizedResult.centroids[i]).toLowerCase() === target) return i;
     }
     return null;
+}
+
+// Find all pixel locations for a specific color
+function findPixelsOfColor(colorIndex) {
+    if (!quantizedResult || !currentImageData) return [];
+    
+    const locations = [];
+    const width = currentImageData.width;
+    const height = currentImageData.height;
+    const assignments = quantizedResult.assignments;
+    
+    for (let i = 0; i < assignments.length; i++) {
+        if (assignments[i] === colorIndex) {
+            const x = i % width;
+            const y = Math.floor(i / width);
+            locations.push({x, y});
+        }
+    }
+    
+    return locations;
+}
+
+// Navigate to a specific pixel location
+function navigateToPixel(x, y) {
+    if (!elements.quantizedCanvas || !currentImageData) return;
+    
+    const canvas = elements.quantizedCanvas;
+    const rect = canvas.getBoundingClientRect();
+    const imgWidth = canvas.width;
+    const imgHeight = canvas.height;
+    
+    // Clamp to valid range
+    x = Math.max(0, Math.min(imgWidth - 1, x));
+    y = Math.max(0, Math.min(imgHeight - 1, y));
+    
+    // Update pixel coordinates
+    lastPixelX = x;
+    lastPixelY = y;
+    
+    // Convert to screen coordinates
+    const xDev = (x + 0.5) * rect.width / imgWidth;
+    const yDev = (y + 0.5) * rect.height / imgHeight;
+    
+    lastMouseX = rect.left + xDev;
+    lastMouseY = rect.top + yDev;
+    
+    // Activate magnifier if not already active
+    if (!magnifierActive) {
+        magnifierActive = true;
+    }
+    
+    // Trigger mousemove to update magnifier and crosshairs
+    isSyntheticMove = true;
+    const evt = new MouseEvent('mousemove', { clientX: lastMouseX, clientY: lastMouseY, bubbles: true });
+    canvas.dispatchEvent(evt);
+    isSyntheticMove = false;
+    
+    console.log(`Navigated to pixel (${x}, ${y})`);
+}
+
+// Start find mode for a color
+function startFindMode(colorIndex) {
+    findColorIndex = colorIndex;
+    findPixelLocations = findPixelsOfColor(colorIndex);
+    findCurrentIndex = 0;
+    findModeActive = true;
+    
+    if (findPixelLocations.length === 0) {
+        showKeyPopup('No pixels found');
+        findModeActive = false;
+        return;
+    }
+    
+    // Navigate to first pixel
+    const loc = findPixelLocations[0];
+    navigateToPixel(loc.x, loc.y);
+    showKeyPopup(`Pixel 1 of ${findPixelLocations.length}`);
+}
+
+// Navigate to next pixel in find mode
+function findNextPixel() {
+    if (!findModeActive || findPixelLocations.length === 0) return;
+    
+    findCurrentIndex = (findCurrentIndex + 1) % findPixelLocations.length;
+    const loc = findPixelLocations[findCurrentIndex];
+    navigateToPixel(loc.x, loc.y);
+    showKeyPopup(`Pixel ${findCurrentIndex + 1} of ${findPixelLocations.length}`);
 }
 
 let ignorePickActive = false;
@@ -1943,6 +2034,23 @@ function displayColorPalette(colors, stats, originalIndices) {
             row.appendChild(reset);
         }
         
+        // Add Find button (always visible, useful for rare colors)
+        const findBtn = document.createElement('span');
+        findBtn.className = 'find-icon';
+        findBtn.textContent = '🔍 Find';
+        findBtn.title = `Find and navigate to pixels of this color (${item.count} total)`;
+        findBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (findModeActive && findColorIndex === item.originalIndex) {
+                // Already in find mode for this color, go to next pixel
+                findNextPixel();
+            } else {
+                // Start find mode for this color
+                startFindMode(item.originalIndex);
+            }
+        };
+        row.appendChild(findBtn);
+        
         // Add hover and click events
         row.addEventListener('mouseenter', () => {
             // Replace mode: before first click, hover previews highlight; after first click, ignore
@@ -2059,6 +2167,23 @@ function displayColorPalette(colors, stats, originalIndices) {
                 sw.appendChild(reset);
                 sw.classList.add('replaced');
             }
+            
+            // Add Find button (always visible)
+            const findBtn = document.createElement('span');
+            findBtn.className = 'find-icon';
+            findBtn.textContent = '🔍 Find';
+            findBtn.title = `Find and navigate to pixels of this color (${item.count} total)`;
+            findBtn.onclick = (e) => {
+                e.stopPropagation(); // Prevent triggering color selection
+                if (findModeActive && findColorIndex === item.originalIndex) {
+                    // Already in find mode for this color, go to next pixel
+                    findNextPixel();
+                } else {
+                    // Start find mode for this color
+                    startFindMode(item.originalIndex);
+                }
+            };
+            sw.appendChild(findBtn);
             
             elements.adjacentTargetOptions.appendChild(sw);
         });

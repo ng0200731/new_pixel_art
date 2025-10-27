@@ -565,6 +565,23 @@ header h1 {
 .color-row.replaced .reset-icon { display: inline-block; }
 .adjacent-swatch.replaced .reset-icon { display: inline-block; }
 
+.find-icon {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--primary-color);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: #eff6ff;
+    border: 1px solid var(--primary-color);
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.find-icon:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
 /* Modal for replace confirm */
 .modal-overlay {
     position: fixed;
