@@ -27,6 +27,8 @@ let lastPixelY = -1;
 let replaceMode = false; // whether we are selecting colors to replace
 let replaceSourceIndex = null; // first chosen color (to be replaced)
 let replacedColors = new Set(); // palette indices marked as replaced (show red strip)
+let adjacentReplacedColors = new Set(); // colors modified by adjacent replacement
+let adjacentReplacementHistory = new Map(); // Map<colorIndex, original assignments> for undo
 let keyPopupTimer = null; // toast timer for key press popup
 
 function showKeyPopup(label){
@@ -96,6 +98,7 @@ const elements = {
     adjacentPanel: document.getElementById('adjacent-panel'),
     adjacentTargetOptions: document.getElementById('adjacent-target-options'),
     ignoreColorBtn: document.getElementById('ignore-color-btn'),
+    resetAdjacentBtn: document.getElementById('reset-adjacent-btn'),
     adjacentInstructions: document.getElementById('adjacent-instructions'),
     ignoreChips: document.getElementById('ignore-chips'),
     replaceSurroundBtn: document.getElementById('replace-surround-btn')
@@ -171,6 +174,11 @@ function initializeEventListeners() {
                 clearHighlight();
                 if (elements.ignoreColorBtn) elements.ignoreColorBtn.disabled = true;
                 if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+                // Clear ignore mode and chips
+                ignorePickActive = false;
+                ignoredHexes.clear();
+                if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
+                if (elements.adjacentInstructions) elements.adjacentInstructions.textContent = '';
             } else {
                 // Select
                 highlightLocked = true;
@@ -178,6 +186,12 @@ function initializeEventListeners() {
                 highlightColorPixels(idx);
                 sw.classList.add('active');
                 if (elements.ignoreColorBtn) elements.ignoreColorBtn.disabled = false;
+                // Replace surround button is disabled until ignore mode is activated
+                if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+                // Reset button stays at current state (enabled if chips exist or ignore mode is on)
+                if (elements.resetAdjacentBtn) {
+                    elements.resetAdjacentBtn.disabled = !ignorePickActive && ignoredHexes.size === 0;
+                }
             }
             evaluateSurroundingCandidate();
         }
@@ -187,8 +201,25 @@ function initializeEventListeners() {
         if (elements.adjacentInstructions) {
             elements.adjacentInstructions.textContent = ignorePickActive ? 'Pick 1 or more colors on the pixel image to ignore (click to add, × to remove).' : '';
         }
+        // Enable/disable reset button based on ignore mode or chips
+        if (elements.resetAdjacentBtn) {
+            elements.resetAdjacentBtn.disabled = !ignorePickActive && ignoredHexes.size === 0;
+        }
+        // Update replace surround button state based on ignore mode AND ignored colors count
         evaluateSurroundingCandidate();
     });
+    
+    elements.resetAdjacentBtn?.addEventListener('click', () => {
+        // Reset all adjacent/ignore state
+        ignorePickActive = false;
+        ignoredHexes.clear();
+        if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
+        if (elements.adjacentInstructions) elements.adjacentInstructions.textContent = '';
+        if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+        if (elements.resetAdjacentBtn) elements.resetAdjacentBtn.disabled = true;
+        evaluateSurroundingCandidate();
+    });
+    
     elements.quantizedCanvas.addEventListener('click', (e)=>{
         if (!ignorePickActive || !quantizedResult) return;
         const rect = elements.quantizedCanvas.getBoundingClientRect();
@@ -322,9 +353,17 @@ function addIgnoreChip(hex){
     chip.querySelector('.remove').addEventListener('click', ()=>{
         ignoredHexes.delete(norm);
         chip.remove();
+        // Disable reset button if no more chips and ignore mode is off
+        if (elements.resetAdjacentBtn) {
+            elements.resetAdjacentBtn.disabled = !ignorePickActive && ignoredHexes.size === 0;
+        }
         evaluateSurroundingCandidate();
     });
     elements.ignoreChips.appendChild(chip);
+    // Enable reset button when a chip is added
+    if (elements.resetAdjacentBtn) elements.resetAdjacentBtn.disabled = false;
+    // Update button state when a chip is added
+    evaluateSurroundingCandidate();
 }
 
 // Determine if selected color is surrounded by exactly one other color (4-neighbors) after ignoring picks
@@ -367,8 +406,10 @@ function evaluateSurroundingCandidate(){
         if (t !== -1) { out[i] = t; perPixelReplacementCount++; }
     }
     perPixelSurroundTargets = out;
-    // Button is enabled to allow viewing the popup even when zero; confirmation will be disabled when zero
-    if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = false;
+    // Button is only enabled when ignore mode is active AND at least one color is ignored
+    if (elements.replaceSurroundBtn) {
+        elements.replaceSurroundBtn.disabled = !(ignorePickActive && ignoredHexes.size > 0);
+    }
 }
 
 // Blue preview overlay for the pixels of the selected color
@@ -493,32 +534,83 @@ function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
         document.body.removeChild(overlay);
         // Perform per-pixel replacement
         performPerPixelReplace();
-        // Cleanup and reset Adjacent UI state
+        // Automatically reset everything after replacement (like clicking Reset button)
         clearAdjacentPreview();
+        ignorePickActive = false;
         ignoredHexes.clear();
         if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
+        if (elements.adjacentInstructions) elements.adjacentInstructions.textContent = '';
+        if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+        if (elements.resetAdjacentBtn) elements.resetAdjacentBtn.disabled = true;
         evaluateSurroundingCandidate();
-        // Clear yellow highlight state
+        // Clear yellow highlight state and deselect color
         highlightLocked = false;
         lockedColorIndex = null;
         clearHighlight();
+        // Remove active state from all adjacent swatches
+        document.querySelectorAll('.adjacent-swatch').forEach(el => el.classList.remove('active'));
+        // Disable ignore button since no color is selected
+        if (elements.ignoreColorBtn) elements.ignoreColorBtn.disabled = true;
     });
 }
 
 // Execute per-pixel replacements using precomputed perPixelSurroundTargets
 function performPerPixelReplace(){
-    if (!quantizedResult || !perPixelSurroundTargets) return;
+    if (!quantizedResult || !perPixelSurroundTargets || lockedColorIndex == null) return;
     const assignments = quantizedResult.assignments;
+    
+    // Track only the pixels that will be changed in THIS operation
+    const changedPixels = new Map(); // Map<pixelIndex, originalColorIndex>
+    
     for (let i=0;i<assignments.length;i++){
         const t = perPixelSurroundTargets[i];
-        if (t !== -1) assignments[i] = t;
+        if (t !== -1) {
+            // Save original color ONLY for pixels being changed
+            changedPixels.set(i, assignments[i]);
+            assignments[i] = t;
+        }
     }
+    
+    // Store only the changed pixels for this color
+    adjacentReplacementHistory.set(lockedColorIndex, changedPixels);
+    adjacentReplacedColors.add(lockedColorIndex);
+    
     // Redraw and update palette/stats
     const img = applyQuantization(currentImageData, quantizedResult.centroids, assignments);
     const ctx = elements.quantizedCanvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     ctx.putImageData(img, 0, 0);
     const stats = calculateColorStats(assignments, quantizedResult.centroids.length);
+    colorData = { colors: quantizedResult.centroids, stats, originalIndices: quantizedResult.centroids.map((_,i)=>i) };
+    displayColorPalette(colorData.colors, stats, colorData.originalIndices);
+    if (elements.activeColorCount) {
+        const totalActive = stats.counts.reduce((acc, c, i) => acc + ((c > 0 && !replacedColors.has(i)) ? 1 : 0), 0);
+        elements.activeColorCount.textContent = `(${totalActive} active)`;
+    }
+}
+
+// Restore adjacent replacement for a specific color
+function restoreAdjacentReplacement(colorIndex) {
+    if (!quantizedResult || !adjacentReplacementHistory.has(colorIndex)) return;
+    
+    // Get the map of changed pixels for this operation
+    const changedPixels = adjacentReplacementHistory.get(colorIndex);
+    
+    // Restore ONLY the pixels that were changed in that specific operation
+    changedPixels.forEach((originalColor, pixelIndex) => {
+        quantizedResult.assignments[pixelIndex] = originalColor;
+    });
+    
+    // Remove from tracking
+    adjacentReplacedColors.delete(colorIndex);
+    adjacentReplacementHistory.delete(colorIndex);
+    
+    // Redraw
+    const img = applyQuantization(currentImageData, quantizedResult.centroids, quantizedResult.assignments);
+    const ctx = elements.quantizedCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.putImageData(img, 0, 0);
+    const stats = calculateColorStats(quantizedResult.assignments, quantizedResult.centroids.length);
     colorData = { colors: quantizedResult.centroids, stats, originalIndices: quantizedResult.centroids.map((_,i)=>i) };
     displayColorPalette(colorData.colors, stats, colorData.originalIndices);
     if (elements.activeColorCount) {
@@ -1740,9 +1832,37 @@ function displayColorPalette(colors, stats, originalIndices) {
             const sw = document.createElement('div');
             sw.className = 'adjacent-swatch';
             const hex = rgbToHex(item.color);
-            sw.style.background = hex;
             sw.setAttribute('data-hex', hex);
-            sw.title = `${hex} • ${item.count.toLocaleString()} px`;
+            
+            // Create color preview square
+            const swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            swatch.style.backgroundColor = `rgb(${item.color[0]}, ${item.color[1]}, ${item.color[2]})`;
+            
+            // Create info container (matching Color Palette style)
+            const info = document.createElement('div');
+            info.className = 'color-info';
+            info.innerHTML = `
+                <span class="color-hex">${hex}</span>
+                <span class="color-stats">${item.percentage}% (${item.count.toLocaleString()} pixels)</span>
+            `;
+            
+            sw.appendChild(swatch);
+            sw.appendChild(info);
+            
+            // Add reset icon if this color was modified by adjacent replacement
+            if (adjacentReplacedColors.has(item.originalIndex)) {
+                const reset = document.createElement('span');
+                reset.className = 'reset-icon';
+                reset.textContent = '↺ reset';
+                reset.onclick = (e) => {
+                    e.stopPropagation(); // Prevent triggering color selection
+                    restoreAdjacentReplacement(item.originalIndex);
+                };
+                sw.appendChild(reset);
+                sw.classList.add('replaced');
+            }
+            
             elements.adjacentTargetOptions.appendChild(sw);
         });
         // Update header to show count e.g., "Adjacent (1 color)"

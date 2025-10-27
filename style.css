@@ -1,8 +1,28 @@
-/* Adjacent mirror */
+/* Adjacent mirror - uses exact same style as Color Palette */
 .adjacent-panel { padding: 15px !important; }
-.adjacent-mirror { display:flex; flex-wrap:wrap; gap:6px; }
-.adjacent-swatch { width: 22px; height: 22px; border-radius: 4px; border: 2px solid var(--border); cursor: pointer; }
-.adjacent-swatch.active { outline: 2px solid var(--primary-color); }
+.adjacent-mirror { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 6px; 
+}
+.adjacent-swatch { 
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px;
+    background: #f9fafb;
+    border-radius: 6px;
+    transition: all 0.3s;
+    cursor: pointer;
+}
+.adjacent-swatch:hover {
+    background: #f1f5f9;
+    transform: translateX(2px);
+}
+.adjacent-swatch.active { 
+    background: #fef3c7;
+    border-left: 3px solid var(--warning-color);
+}
 /* Version: 2.9.47 */
 .proof-modal { position: fixed; top: 20px; left: 20px; z-index: 9000; background:#111; color:#fff; font:12px monospace; border-radius:8px; box-shadow: var(--shadow-lg); min-width: 320px; max-width: 60vw; }
 .proof-modal .header { cursor: move; padding:8px 10px; background:#0f172a; border-bottom:1px solid #334155; display:flex; align-items:center; justify-content:space-between; }
@@ -543,6 +563,7 @@ header h1 {
     display: none;
 }
 .color-row.replaced .reset-icon { display: inline-block; }
+.adjacent-swatch.replaced .reset-icon { display: inline-block; }
 
 /* Modal for replace confirm */
 .modal-overlay {
@@ -578,6 +599,18 @@ header h1 {
 .sort-btn:hover {
     background: var(--primary-color);
     color: white;
+}
+
+.sort-btn:disabled,
+.sort-btn[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sort-btn:disabled:hover,
+.sort-btn[disabled]:hover {
+    background: white;
+    color: inherit;
 }
 
 .sort-btn.active {
