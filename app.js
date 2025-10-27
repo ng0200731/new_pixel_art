@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.47
+// Version: 2.9.63
 
-const VERSION = '2.9.47';
+const VERSION = '2.9.63';
 
 // Global state
 let originalImage = null;
@@ -22,9 +22,35 @@ let showGrid = false;
 let gridCanvas = null;
 let lastMouseX = 0; // track last mouse position for magnifier realign
 let lastMouseY = 0;
+let lastPixelX = -1; // track cursor position in image pixel coordinates
+let lastPixelY = -1;
 let replaceMode = false; // whether we are selecting colors to replace
 let replaceSourceIndex = null; // first chosen color (to be replaced)
 let replacedColors = new Set(); // palette indices marked as replaced (show red strip)
+let keyPopupTimer = null; // toast timer for key press popup
+
+function showKeyPopup(label){
+    let el = document.getElementById('key-popup');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'key-popup';
+        el.style.position = 'fixed';
+        el.style.right = '12px';
+        el.style.bottom = '12px';
+        el.style.zIndex = '10000';
+        el.style.background = 'rgba(0,0,0,0.8)';
+        el.style.color = '#fff';
+        el.style.font = '12px monospace';
+        el.style.padding = '6px 10px';
+        el.style.borderRadius = '6px';
+        el.style.transition = 'opacity 0.2s';
+        document.body.appendChild(el);
+    }
+    el.textContent = `Key: ${label}`;
+    el.style.opacity = '1';
+    if (keyPopupTimer) clearTimeout(keyPopupTimer);
+    keyPopupTimer = setTimeout(()=>{ el.style.opacity = '0'; }, 700);
+}
 
 // DOM elements
 const elements = {
@@ -203,20 +229,70 @@ function initializeEventListeners() {
     });
     
     // Shift key to toggle highlight on/off (preserve selected color)
-    document.addEventListener('keydown', (e) => {
+    const onKey = (e) => {
+        const key = e.key;
         if (e.key === 'Shift') {
             highlightLocked = !highlightLocked;
             if (highlightLocked) {
-                // Toggle ON: restore previous selection if available
                 if (lockedColorIndex !== null) {
                     highlightColorPixels(lockedColorIndex);
                 }
             } else {
-                // Toggle OFF: just hide overlay, keep lockedColorIndex
                 clearHighlight();
             }
+            return;
         }
-    });
+
+        // WASD keys only (arrows disabled due to browser conflicts)
+        if (!currentImageData || !elements.quantizedCanvas || !magnifierActive) return;
+        
+        const lk = String(key || '').toLowerCase();
+        if (lk !== 'w' && lk !== 'a' && lk !== 's' && lk !== 'd') return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const rect = elements.quantizedCanvas.getBoundingClientRect();
+        const imgWidth = elements.quantizedCanvas.width;
+        const imgHeight = elements.quantizedCanvas.height;
+        
+        // Use stored pixel coordinates directly
+        let xImg = lastPixelX >= 0 ? lastPixelX : Math.floor((lastMouseX - rect.left) * imgWidth / rect.width);
+        let yImg = lastPixelY >= 0 ? lastPixelY : Math.floor((lastMouseY - rect.top) * imgHeight / rect.height);
+        
+        const xImgBefore = xImg;
+        const yImgBefore = yImg;
+        
+        let label = '';
+        if (lk === 'a') { xImg -= 1; label = 'Left (A)'; }
+        if (lk === 'd') { xImg += 1; label = 'Right (D)'; }
+        if (lk === 'w') { yImg -= 1; label = 'Up (W)'; }
+        if (lk === 's') { yImg += 1; label = 'Down (S)'; }
+        
+        const xImgAfter = xImg;
+        const yImgAfter = yImg;
+        
+        xImg = Math.max(0, Math.min(imgWidth - 1, xImg));
+        yImg = Math.max(0, Math.min(imgHeight - 1, yImg));
+        
+        // Update pixel coordinates
+        lastPixelX = xImg;
+        lastPixelY = yImg;
+        
+        // Convert pixel coordinates to screen coordinates
+        const xDev = (xImg + 0.5) * rect.width / imgWidth;
+        const yDev = (yImg + 0.5) * rect.height / imgHeight;
+        
+        lastMouseX = rect.left + xDev;
+        lastMouseY = rect.top + yDev;
+        
+        console.log(`Key: ${lk}, before: (${xImgBefore},${yImgBefore}), after move: (${xImgAfter},${yImgAfter}), final: (${xImg},${yImg}), max: (${imgWidth-1},${imgHeight-1})`);
+        
+        const evt = new MouseEvent('mousemove', { clientX: lastMouseX, clientY: lastMouseY, bubbles: true });
+        elements.quantizedCanvas.dispatchEvent(evt);
+        showKeyPopup(label);
+    };
+    document.addEventListener('keydown', onKey, true);
 }
 
 // Helper: find centroid index by hex
@@ -729,6 +805,12 @@ function handleCanvasHover(e) {
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
     
+    // Track pixel coordinates and scale coordinates to actual canvas size
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    lastPixelX = Math.floor(x * scaleX);
+    lastPixelY = Math.floor(y * scaleY);
+    
     // Show crosshairs
     elements.crosshairH.style.display = 'block';
     elements.crosshairV.style.display = 'block';
@@ -737,13 +819,11 @@ function handleCanvasHover(e) {
     elements.crosshairH.style.top = `${e.clientY}px`;
     elements.crosshairV.style.left = `${e.clientX}px`;
     
-    // Scale coordinates to actual canvas size and normalize to [0,1]
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    // Normalize to [0,1] for magnifier
     const canvasX = x * scaleX;
     const canvasY = y * scaleY;
-    const u = Math.min(Math.max(canvasX / canvas.width, 0), 1);
-    const v = Math.min(Math.max(canvasY / canvas.height, 0), 1);
+    const u = Math.min(Math.max(canvasX / canvas.width, 0), 0.9999);
+    const v = Math.min(Math.max(canvasY / canvas.height, 0), 0.9999);
     
     // Update coord badge (pixel coordinates on quantized canvas)
     if (elements.coordBadge) {
@@ -1059,8 +1139,11 @@ function drawMagnifier(u, v) {
         
         // Draw red square exactly covering the hovered source pixel inside the lens
         const pxPerSource = magnifierSize / sourceSize; // magnifier pixels per one source pixel
-        const localX = (qx - srcX) * pxPerSource;
-        const localY = (qy - srcY) * pxPerSource;
+        // Clamp qx/qy to the visible source window to keep red square inside magnifier
+        const qxClamped = Math.max(srcX, Math.min(srcX + sourceSize - 1, qx));
+        const qyClamped = Math.max(srcY, Math.min(srcY + sourceSize - 1, qy));
+        const localX = (qxClamped - srcX) * pxPerSource;
+        const localY = (qyClamped - srcY) * pxPerSource;
         magnifierCtx.fillStyle = 'red';
         magnifierCtx.fillRect(Math.floor(localX), Math.floor(localY), Math.ceil(pxPerSource), Math.ceil(pxPerSource));
         
