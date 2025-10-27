@@ -24,6 +24,7 @@ let lastMouseX = 0; // track last mouse position for magnifier realign
 let lastMouseY = 0;
 let lastPixelX = -1; // track cursor position in image pixel coordinates
 let lastPixelY = -1;
+let isSyntheticMove = false; // flag to prevent updating pixel coords on keyboard-generated moves
 let replaceMode = false; // whether we are selecting colors to replace
 let replaceSourceIndex = null; // first chosen color (to be replaced)
 let replacedColors = new Set(); // palette indices marked as replaced (show red strip)
@@ -319,8 +320,11 @@ function initializeEventListeners() {
         
         console.log(`Key: ${lk}, before: (${xImgBefore},${yImgBefore}), after move: (${xImgAfter},${yImgAfter}), final: (${xImg},${yImg}), max: (${imgWidth-1},${imgHeight-1})`);
         
+        // Set flag to prevent handleCanvasHover from updating pixel coords
+        isSyntheticMove = true;
         const evt = new MouseEvent('mousemove', { clientX: lastMouseX, clientY: lastMouseY, bubbles: true });
         elements.quantizedCanvas.dispatchEvent(evt);
+        isSyntheticMove = false;
         showKeyPopup(label);
     };
     document.addEventListener('keydown', onKey, true);
@@ -897,11 +901,16 @@ function handleCanvasHover(e) {
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
     
-    // Track pixel coordinates and scale coordinates to actual canvas size
+    // Calculate scale factors
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    lastPixelX = Math.floor(x * scaleX);
-    lastPixelY = Math.floor(y * scaleY);
+    
+    // Track pixel coordinates - but NOT for keyboard-generated synthetic events
+    // Only update pixel coords for real mouse movements to prevent drift
+    if (!isSyntheticMove) {
+        lastPixelX = Math.floor(x * scaleX);
+        lastPixelY = Math.floor(y * scaleY);
+    }
     
     // Show crosshairs
     elements.crosshairH.style.display = 'block';
@@ -1373,6 +1382,26 @@ function processImageFile(file) {
             // Reset K-means centroids for new image
             if (typeof resetPreviousCentroids === 'function') {
                 resetPreviousCentroids();
+            }
+            
+            // Reset all adjacent replacement history and state for new image
+            adjacentReplacedColors.clear();
+            adjacentReplacementHistory.clear();
+            replacedColors.clear(); // Reset regular color replacements too
+            ignoredHexes.clear();
+            ignorePickActive = false;
+            replaceMode = false;
+            replaceSourceIndex = null;
+            if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
+            if (elements.adjacentInstructions) elements.adjacentInstructions.textContent = '';
+            if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
+            if (elements.replaceButton) elements.replaceButton.classList.remove('active');
+            highlightLocked = false;
+            lockedColorIndex = null;
+            highlightedColorIndex = -1;
+            // Clear highlight if exists
+            if (highlightCanvas) {
+                clearHighlight();
             }
             
             // Hide drop zone, show image display
