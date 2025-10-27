@@ -536,8 +536,8 @@ function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
     });
     overlay.querySelector('#adj-confirm').addEventListener('click', () => {
         document.body.removeChild(overlay);
-        // Perform per-pixel replacement
-        performPerPixelReplace();
+        // Perform iterative per-pixel replacement until convergence
+        performIterativeReplace();
         // Automatically reset everything after replacement (like clicking Reset button)
         clearAdjacentPreview();
         ignorePickActive = false;
@@ -558,7 +558,125 @@ function showAdjacentReplaceConfirm(sourceIndex, targetIndex){
     });
 }
 
-// Execute per-pixel replacements using precomputed perPixelSurroundTargets
+// Iteratively perform per-pixel replacement until convergence
+function performIterativeReplace(){
+    if (!quantizedResult || lockedColorIndex == null) return;
+    
+    const assignments = quantizedResult.assignments;
+    const width = currentImageData.width;
+    const height = currentImageData.height;
+    const total = width * height;
+    
+    // Save original assignments for ENTIRE operation (for undo)
+    const originalAssignments = new Uint32Array(assignments);
+    const allChangedPixels = new Map(); // Track all pixels changed across iterations
+    
+    // Map ignored hexes to indices once
+    const ignoredIdx = new Set();
+    ignoredHexes.forEach(h => {
+        const idx = findColorIndexByHex(h);
+        if (idx != null) ignoredIdx.add(idx);
+    });
+    
+    let iteration = 0;
+    let previousCount = -1;
+    const maxIterations = 1000; // Safety limit
+    
+    console.log(`Starting iterative adjacent replacement for color ${lockedColorIndex}...`);
+    
+    // Iterate until convergence
+    while (iteration < maxIterations) {
+        iteration++;
+        
+        // Count current pixels of target color
+        let currentCount = 0;
+        for (let i = 0; i < total; i++) {
+            if (assignments[i] === lockedColorIndex) currentCount++;
+        }
+        
+        console.log(`Iteration ${iteration}: Color ${lockedColorIndex} has ${currentCount} pixels`);
+        
+        // Check convergence
+        if (currentCount === previousCount) {
+            console.log(`Converged after ${iteration - 1} iterations. No more changes.`);
+            break;
+        }
+        
+        if (currentCount === 0) {
+            console.log(`Color ${lockedColorIndex} completely replaced after ${iteration} iterations.`);
+            break;
+        }
+        
+        previousCount = currentCount;
+        
+        // Calculate which pixels to replace in this iteration
+        const targets = new Int32Array(total);
+        targets.fill(-1);
+        
+        function uniqueNeighborTarget(i){
+            const x = i % width; const y = (i - x) / width;
+            const candidates = new Set();
+            if (x > 0) candidates.add(assignments[i-1]);
+            if (x+1 < width) candidates.add(assignments[i+1]);
+            if (y > 0) candidates.add(assignments[i-width]);
+            if (y+1 < height) candidates.add(assignments[i+width]);
+            candidates.delete(lockedColorIndex);
+            ignoredIdx.forEach(idx => candidates.delete(idx));
+            if (candidates.size === 1) return [...candidates][0];
+            return -1;
+        }
+        
+        // Find pixels to replace
+        let replacedInIteration = 0;
+        for (let i=0; i<total; i++){
+            if (assignments[i] !== lockedColorIndex) continue;
+            const t = uniqueNeighborTarget(i);
+            if (t !== -1) {
+                targets[i] = t;
+                replacedInIteration++;
+            }
+        }
+        
+        if (replacedInIteration === 0) {
+            console.log(`No more replaceable pixels found after ${iteration} iterations.`);
+            break;
+        }
+        
+        console.log(`  Replacing ${replacedInIteration} pixels in iteration ${iteration}`);
+        
+        // Perform replacement for this iteration
+        for (let i=0; i<total; i++){
+            if (targets[i] !== -1) {
+                // Track this pixel change (save original only if not already changed)
+                if (!allChangedPixels.has(i)) {
+                    allChangedPixels.set(i, originalAssignments[i]);
+                }
+                assignments[i] = targets[i];
+            }
+        }
+    }
+    
+    // Store the complete set of changed pixels for undo
+    adjacentReplacementHistory.set(lockedColorIndex, allChangedPixels);
+    adjacentReplacedColors.add(lockedColorIndex);
+    
+    console.log(`Iterative replacement complete. Total pixels changed: ${allChangedPixels.size}`);
+    
+    // Redraw and update palette/stats
+    const img = applyQuantization(currentImageData, quantizedResult.centroids, assignments);
+    const ctx = elements.quantizedCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.putImageData(img, 0, 0);
+    const stats = calculateColorStats(assignments, quantizedResult.centroids.length);
+    colorData = { colors: quantizedResult.centroids, stats, originalIndices: quantizedResult.centroids.map((_,i)=>i) };
+    displayColorPalette(colorData.colors, stats, colorData.originalIndices);
+    if (elements.activeColorCount) {
+        const totalActive = stats.counts.reduce((acc, c, i) => acc + ((c > 0 && !replacedColors.has(i)) ? 1 : 0), 0);
+        elements.activeColorCount.textContent = `(${totalActive} active)`;
+    }
+}
+
+// Execute per-pixel replacements using precomputed perPixelSurroundTargets (legacy single iteration)
 function performPerPixelReplace(){
     if (!quantizedResult || !perPixelSurroundTargets || lockedColorIndex == null) return;
     const assignments = quantizedResult.assignments;
@@ -1263,7 +1381,7 @@ function drawMagnifier(u, v) {
         // Just show original if no quantized version yet
         magnifierCtx.drawImage(
             elements.originalCanvas,
-            canvasX - sourceSize/2, canvasY - sourceSize/2, sourceSize, sourceSize,
+            qx - sourceSize/2, qy - sourceSize/2, sourceSize, sourceSize,
             0, 0, magnifierSize, magnifierSize
         );
         
@@ -1379,30 +1497,80 @@ function processImageFile(file) {
     reader.onload = function(e) {
         originalImage = new Image();
         originalImage.onload = function() {
-            // Reset K-means centroids for new image
+            // === COMPLETE RESET - as if page just loaded ===
+            
+            // Reset K-means centroids
             if (typeof resetPreviousCentroids === 'function') {
                 resetPreviousCentroids();
             }
             
-            // Reset all adjacent replacement history and state for new image
+            // Clear quantized result
+            quantizedResult = null;
+            currentImageData = null;
+            colorData = null;
+            
+            // Reset all replacement and adjacent states
             adjacentReplacedColors.clear();
             adjacentReplacementHistory.clear();
-            replacedColors.clear(); // Reset regular color replacements too
+            replacedColors.clear();
             ignoredHexes.clear();
             ignorePickActive = false;
             replaceMode = false;
             replaceSourceIndex = null;
+            perPixelSurroundTargets = null;
+            perPixelReplacementCount = 0;
+            surroundCandidateIndex = null;
+            
+            // Reset highlight states
+            highlightLocked = false;
+            lockedColorIndex = null;
+            highlightedColorIndex = -1;
+            if (highlightCanvas) {
+                clearHighlight();
+            }
+            
+            // Clear magnifier state
+            magnifierActive = false;
+            if (elements.magnifier) elements.magnifier.style.display = 'none';
+            if (elements.magnifierOriginal) elements.magnifierOriginal.style.display = 'none';
+            if (elements.crosshairH) elements.crosshairH.style.display = 'none';
+            if (elements.crosshairV) elements.crosshairV.style.display = 'none';
+            if (elements.coordBadge) elements.coordBadge.style.display = 'none';
+            if (elements.proofBadge) elements.proofBadge.style.display = 'none';
+            
+            // Clear adjacent preview overlay if exists
+            clearAdjacentPreview();
+            
+            // Clear grid if active
+            if (showGrid) {
+                clearGrid();
+                showGrid = false;
+                if (elements.showGridCheckbox) elements.showGridCheckbox.checked = false;
+            }
+            
+            // Clear UI elements
             if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
             if (elements.adjacentInstructions) elements.adjacentInstructions.textContent = '';
             if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
             if (elements.replaceButton) elements.replaceButton.classList.remove('active');
-            highlightLocked = false;
-            lockedColorIndex = null;
-            highlightedColorIndex = -1;
-            // Clear highlight if exists
-            if (highlightCanvas) {
-                clearHighlight();
-            }
+            if (elements.paletteRows) elements.paletteRows.innerHTML = '';
+            if (elements.adjacentTargetOptions) elements.adjacentTargetOptions.innerHTML = '';
+            if (elements.activeColorCount) elements.activeColorCount.textContent = '';
+            
+            // Reset buttons
+            if (elements.ignoreColorBtn) elements.ignoreColorBtn.disabled = true;
+            if (elements.resetAdjacentBtn) elements.resetAdjacentBtn.disabled = true;
+            if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+            if (elements.downloadBtn) elements.downloadBtn.disabled = true;
+            if (elements.downloadBmpBtn) elements.downloadBmpBtn.disabled = true;
+            
+            // Remove active states from all rows/swatches
+            document.querySelectorAll('.color-row').forEach(r => {
+                r.classList.remove('active');
+                r.classList.remove('selected-source');
+                r.classList.remove('replaced');
+            });
+            document.querySelectorAll('.adjacent-swatch').forEach(el => el.classList.remove('active'));
             
             // Hide drop zone, show image display
             elements.dropZone.style.display = 'none';
@@ -1894,12 +2062,12 @@ function displayColorPalette(colors, stats, originalIndices) {
             
             elements.adjacentTargetOptions.appendChild(sw);
         });
-        // Update header to show count e.g., "Adjacent (1 color)"
+        // Update header to show count e.g., "Adjacent (1 color) - single color"
         if (elements.adjacentPanel) {
             const titleEl = elements.adjacentPanel.querySelector('h4.section-title');
             if (titleEl) {
                 const label = adjacentCount === 1 ? 'color' : 'colors';
-                titleEl.textContent = `Adjacent (${adjacentCount} ${label})`;
+                titleEl.textContent = `Adjacent (${adjacentCount} ${label}) - single color`;
             }
         }
     }
