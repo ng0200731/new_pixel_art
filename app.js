@@ -106,7 +106,16 @@ const elements = {
     resetAdjacentBtn: document.getElementById('reset-adjacent-btn'),
     adjacentInstructions: document.getElementById('adjacent-instructions'),
     ignoreChips: document.getElementById('ignore-chips'),
-    replaceSurroundBtn: document.getElementById('replace-surround-btn')
+    replaceSurroundBtn: document.getElementById('replace-surround-btn'),
+    adjacentMultiPanel: document.getElementById('adjacent-multi-panel'),
+    adjacentMultiTargetOptions: document.getElementById('adjacent-multi-target-options'),
+    ignoreMultiColorBtn: document.getElementById('ignore-multi-color-btn'),
+    resetAdjacentMultiBtn: document.getElementById('reset-adjacent-multi-btn'),
+    adjacentMultiInstructions: document.getElementById('adjacent-multi-instructions'),
+    ignoreMultiChips: document.getElementById('ignore-multi-chips'),
+    replaceMultiSurroundBtn: document.getElementById('replace-multi-surround-btn'),
+    patternPanel: document.getElementById('pattern-panel'),
+    patternContent: document.getElementById('pattern-content')
 };
 
 // Initialize event listeners
@@ -2193,6 +2202,75 @@ function displayColorPalette(colors, stats, originalIndices) {
             if (titleEl) {
                 const label = adjacentCount === 1 ? 'color' : 'colors';
                 titleEl.textContent = `Adjacent (${adjacentCount} ${label}) - single color`;
+            }
+        }
+    }
+    
+    // Render Adjacent Multi mirror: exact duplicate of single color for now
+    if (elements.adjacentMultiTargetOptions) {
+        elements.adjacentMultiTargetOptions.innerHTML = '';
+        let adjacentMultiCount = 0;
+        sortedData.forEach(item => {
+            const isActive = item.count > 0 && !replacedColors.has(item.originalIndex);
+            if (!isActive) return;
+            adjacentMultiCount++;
+            const sw = document.createElement('div');
+            sw.className = 'adjacent-swatch';
+            const hex = rgbToHex(item.color);
+            sw.setAttribute('data-hex', hex);
+            
+            // Create color preview square
+            const swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            swatch.style.backgroundColor = `rgb(${item.color[0]}, ${item.color[1]}, ${item.color[2]})`;
+            
+            // Create info container (matching Color Palette style)
+            const info = document.createElement('div');
+            info.className = 'color-info';
+            info.innerHTML = `
+                <span class="color-hex">${hex}</span>
+                <span class="color-stats">${item.percentage}% (${item.count.toLocaleString()} pixels)</span>
+            `;
+            
+            sw.appendChild(swatch);
+            sw.appendChild(info);
+            
+            // Add reset icon if this color was modified by adjacent replacement
+            if (adjacentReplacedColors.has(item.originalIndex)) {
+                const reset = document.createElement('span');
+                reset.className = 'reset-icon';
+                reset.textContent = '↺ reset';
+                reset.onclick = (e) => {
+                    e.stopPropagation();
+                    restoreAdjacentReplacement(item.originalIndex);
+                };
+                sw.appendChild(reset);
+                sw.classList.add('replaced');
+            }
+            
+            // Add Find button (always visible)
+            const findBtn = document.createElement('span');
+            findBtn.className = 'find-icon';
+            findBtn.textContent = '🔍 Find';
+            findBtn.title = `Find and navigate to pixels of this color (${item.count} total)`;
+            findBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (findModeActive && findColorIndex === item.originalIndex) {
+                    findNextPixel();
+                } else {
+                    startFindMode(item.originalIndex);
+                }
+            };
+            sw.appendChild(findBtn);
+            
+            elements.adjacentMultiTargetOptions.appendChild(sw);
+        });
+        // Update header to show count e.g., "Adjacent (1 color) - multi color"
+        if (elements.adjacentMultiPanel) {
+            const titleEl = elements.adjacentMultiPanel.querySelector('h4.section-title');
+            if (titleEl) {
+                const label = adjacentMultiCount === 1 ? 'color' : 'colors';
+                titleEl.textContent = `Adjacent (${adjacentMultiCount} ${label}) - multi color`;
             }
         }
     }

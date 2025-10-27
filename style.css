@@ -1,5 +1,18 @@
 /* Adjacent mirror - uses exact same style as Color Palette */
 .adjacent-panel { padding: 15px !important; }
+
+/* Pattern panel */
+.pattern-panel { 
+    padding: 15px !important;
+}
+.pattern-content {
+    min-height: 50px;
+    padding: 10px;
+    background: #f9fafb;
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
 .adjacent-mirror { 
     display: flex; 
     flex-direction: column; 
