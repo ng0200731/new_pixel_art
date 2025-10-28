@@ -29,6 +29,9 @@ let findModeActive = false; // whether we're in find/navigate mode
 let findColorIndex = null; // which color we're finding
 let findPixelLocations = []; // array of {x, y} for current color
 let findCurrentIndex = 0; // which pixel we're viewing (0-based)
+let multiColorSelectedIndices = new Set(); // which colors are selected in multi-color panel (needs at least 2)
+let multiColorFlashInterval = null; // interval ID for flashing animation
+let multiColorFlashVisible = true; // toggle state for flashing
 let replaceMode = false; // whether we are selecting colors to replace
 let replaceSourceIndex = null; // first chosen color (to be replaced)
 let replacedColors = new Set(); // palette indices marked as replaced (show red strip)
@@ -1373,9 +1376,16 @@ function drawMagnifier(u, v) {
     magnifierCtx.imageSmoothingEnabled = false;
     magnifierCtx.clearRect(0, 0, magnifierSize, magnifierSize);
     
-    // Map normalized coords to pixel canvas space
-    const qx = Math.floor(u * elements.quantizedCanvas.width);
-    const qy = Math.floor(v * elements.quantizedCanvas.height);
+    // Use stored pixel coordinates if available (more accurate for Find feature)
+    // Otherwise calculate from normalized coords
+    let qx, qy;
+    if (lastPixelX >= 0 && lastPixelY >= 0) {
+        qx = lastPixelX;
+        qy = lastPixelY;
+    } else {
+        qx = Math.floor(u * elements.quantizedCanvas.width);
+        qy = Math.floor(v * elements.quantizedCanvas.height);
+    }
     let originalColor = null;
     let pixelColor = null;
     
@@ -1414,7 +1424,8 @@ function drawMagnifier(u, v) {
         );
         
         // In magnifier: overlay yellow-highlighted pixels using the same source window
-        if (highlightCanvas && highlightedColorIndex >= 0) {
+        // Show highlights for both single-color and multi-color selections
+        if (highlightCanvas && (highlightedColorIndex >= 0 || multiColorSelectedIndices.size > 0)) {
             magnifierCtx.imageSmoothingEnabled = false;
             magnifierCtx.drawImage(
                 highlightCanvas,
@@ -1614,6 +1625,8 @@ function processImageFile(file) {
             adjacentReplacementHistory.clear();
             replacedColors.clear();
             ignoredHexes.clear();
+            multiColorSelectedIndices.clear();
+            stopMultiColorFlashing();
             ignorePickActive = false;
             replaceMode = false;
             replaceSourceIndex = null;
@@ -1651,16 +1664,22 @@ function processImageFile(file) {
             // Clear UI elements
             if (elements.ignoreChips) elements.ignoreChips.innerHTML = '';
             if (elements.adjacentInstructions) elements.adjacentInstructions.textContent = '';
+            if (elements.ignoreMultiChips) elements.ignoreMultiChips.innerHTML = '';
+            if (elements.adjacentMultiInstructions) elements.adjacentMultiInstructions.textContent = '';
             if (elements.replaceInstructions) elements.replaceInstructions.style.display = 'none';
             if (elements.replaceButton) elements.replaceButton.classList.remove('active');
             if (elements.paletteRows) elements.paletteRows.innerHTML = '';
             if (elements.adjacentTargetOptions) elements.adjacentTargetOptions.innerHTML = '';
+            if (elements.adjacentMultiTargetOptions) elements.adjacentMultiTargetOptions.innerHTML = '';
             if (elements.activeColorCount) elements.activeColorCount.textContent = '';
             
             // Reset buttons
             if (elements.ignoreColorBtn) elements.ignoreColorBtn.disabled = true;
             if (elements.resetAdjacentBtn) elements.resetAdjacentBtn.disabled = true;
             if (elements.replaceSurroundBtn) elements.replaceSurroundBtn.disabled = true;
+            if (elements.ignoreMultiColorBtn) elements.ignoreMultiColorBtn.disabled = true;
+            if (elements.resetAdjacentMultiBtn) elements.resetAdjacentMultiBtn.disabled = true;
+            if (elements.replaceMultiSurroundBtn) elements.replaceMultiSurroundBtn.disabled = true;
             if (elements.downloadBtn) elements.downloadBtn.disabled = true;
             if (elements.downloadBmpBtn) elements.downloadBmpBtn.disabled = true;
             
@@ -2263,6 +2282,43 @@ function displayColorPalette(colors, stats, originalIndices) {
             };
             sw.appendChild(findBtn);
             
+            // Add click handler for multi-selection (toggle)
+            sw.addEventListener('click', (e) => {
+                // Don't trigger if clicking Find or Reset buttons
+                if (e.target.closest('.find-icon') || e.target.closest('.reset-icon')) return;
+                
+                const colorIndex = item.originalIndex;
+                if (multiColorSelectedIndices.has(colorIndex)) {
+                    // Deselect
+                    multiColorSelectedIndices.delete(colorIndex);
+                    sw.classList.remove('active');
+                } else {
+                    // Select
+                    multiColorSelectedIndices.add(colorIndex);
+                    sw.classList.add('active');
+                }
+                
+                // Update button states based on selection count
+                const selectedCount = multiColorSelectedIndices.size;
+                if (elements.ignoreMultiColorBtn) {
+                    elements.ignoreMultiColorBtn.disabled = selectedCount < 2;
+                }
+                
+                // Start or stop flashing based on selection
+                if (selectedCount > 0) {
+                    startMultiColorFlashing();
+                } else {
+                    stopMultiColorFlashing();
+                }
+                
+                console.log(`Multi-color selection: ${selectedCount} colors selected`);
+            });
+            
+            // Mark as active if already selected
+            if (multiColorSelectedIndices.has(item.originalIndex)) {
+                sw.classList.add('active');
+            }
+            
             elements.adjacentMultiTargetOptions.appendChild(sw);
         });
         // Update header to show count e.g., "Adjacent (1 color) - multi color"
@@ -2272,6 +2328,11 @@ function displayColorPalette(colors, stats, originalIndices) {
                 const label = adjacentMultiCount === 1 ? 'color' : 'colors';
                 titleEl.textContent = `Adjacent (${adjacentMultiCount} ${label}) - multi color`;
             }
+        }
+        
+        // Re-apply flashing if colors are selected
+        if (multiColorSelectedIndices.size > 0) {
+            startMultiColorFlashing();
         }
     }
 }
@@ -2324,6 +2385,114 @@ function highlightColorPixels(colorIndex) {
     // Draw solid yellow highlights where pixels match the color
     for (let i = 0; i < quantizedResult.assignments.length; i++) {
         if (quantizedResult.assignments[i] === colorIndex) {
+            const pixelIdx = i * 4;
+            data[pixelIdx] = 255;     // R
+            data[pixelIdx + 1] = 255; // G
+            data[pixelIdx + 2] = 0;   // B
+            data[pixelIdx + 3] = 255; // Alpha (fully opaque - solid)
+        }
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+}
+
+// Start flashing animation for multi-color selection
+function startMultiColorFlashing() {
+    // Clear any existing interval
+    if (multiColorFlashInterval) {
+        clearInterval(multiColorFlashInterval);
+    }
+    
+    multiColorFlashVisible = true;
+    
+    // Flash every 500ms (half second)
+    multiColorFlashInterval = setInterval(() => {
+        multiColorFlashVisible = !multiColorFlashVisible;
+        
+        if (multiColorFlashVisible) {
+            highlightMultipleColors(multiColorSelectedIndices);
+        } else {
+            clearHighlight();
+        }
+        
+        // Redraw magnifier if active to show flashing effect
+        if (magnifierActive && elements.quantizedCanvas) {
+            const rect = elements.quantizedCanvas.getBoundingClientRect();
+            const u = (lastMouseX - rect.left) / rect.width;
+            const v = (lastMouseY - rect.top) / rect.height;
+            if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
+                drawMagnifier(u, v);
+            }
+        }
+    }, 500);
+    
+    // Draw initial highlight
+    highlightMultipleColors(multiColorSelectedIndices);
+}
+
+// Stop flashing animation
+function stopMultiColorFlashing() {
+    if (multiColorFlashInterval) {
+        clearInterval(multiColorFlashInterval);
+        multiColorFlashInterval = null;
+    }
+    multiColorFlashVisible = true;
+    clearHighlight();
+}
+
+// Highlight pixels of multiple colors with borders - for multi-color panel
+function highlightMultipleColors(colorIndices) {
+    if (!quantizedResult) return;
+    if (!colorIndices || colorIndices.size === 0) {
+        clearHighlight();
+        return;
+    }
+    
+    // Create overlay canvas if not exists
+    if (!highlightCanvas) {
+        highlightCanvas = document.createElement('canvas');
+        highlightCanvas.style.position = 'absolute';
+        highlightCanvas.style.pointerEvents = 'none';
+        // Place highlight below grid and crosshair
+        highlightCanvas.style.zIndex = '100';
+        highlightCanvas.style.imageRendering = 'pixelated';
+        highlightCanvas.style.imageRendering = '-moz-crisp-edges';
+        highlightCanvas.style.imageRendering = '-webkit-optimize-contrast';
+        
+        // Insert the highlight canvas directly after the quantized canvas
+        const quantizedBox = elements.quantizedCanvas.parentElement;
+        quantizedBox.style.position = 'relative';
+        quantizedBox.appendChild(highlightCanvas);
+    }
+    
+    // Set canvas size to match quantized canvas exactly (device pixels)
+    highlightCanvas.width = elements.quantizedCanvas.width;
+    highlightCanvas.height = elements.quantizedCanvas.height;
+
+    // Position the overlay using precise client rects to avoid subpixel drift
+    const parentRect = elements.quantizedCanvas.parentElement.getBoundingClientRect();
+    const canvasRect = elements.quantizedCanvas.getBoundingClientRect();
+    const left = canvasRect.left - parentRect.left;
+    const top = canvasRect.top - parentRect.top;
+    highlightCanvas.style.left = `${left}px`;
+    highlightCanvas.style.top = `${top}px`;
+    highlightCanvas.style.width = `${canvasRect.width}px`;
+    highlightCanvas.style.height = `${canvasRect.height}px`;
+    
+    const ctx = highlightCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+    
+    // Draw solid yellow fill for all selected pixels (for flashing effect)
+    const width = highlightCanvas.width;
+    const height = highlightCanvas.height;
+    
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+    
+    // Draw solid yellow highlights where pixels match any of the selected colors
+    for (let i = 0; i < quantizedResult.assignments.length; i++) {
+        if (colorIndices.has(quantizedResult.assignments[i])) {
             const pixelIdx = i * 4;
             data[pixelIdx] = 255;     // R
             data[pixelIdx + 1] = 255; // G
