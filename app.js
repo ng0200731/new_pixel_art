@@ -360,20 +360,84 @@ function findColorIndexByHex(hex){
 function findPixelsOfColor(colorIndex) {
     if (!quantizedResult || !currentImageData) return [];
     
-    const locations = [];
     const width = currentImageData.width;
     const height = currentImageData.height;
     const assignments = quantizedResult.assignments;
     
+    // First, collect all pixels of this color
+    const allPixels = [];
     for (let i = 0; i < assignments.length; i++) {
         if (assignments[i] === colorIndex) {
             const x = i % width;
             const y = Math.floor(i / width);
-            locations.push({x, y});
+            allPixels.push({x, y});
         }
     }
     
-    return locations;
+    if (allPixels.length === 0) return [];
+    
+    // Create a set for quick lookup
+    const pixelSet = new Set(allPixels.map(p => `${p.x},${p.y}`));
+    
+    // Order pixels by connectivity (8-neighbor)
+    const orderedLocations = [];
+    const visited = new Set();
+    
+    // Start with the first pixel (top-left)
+    let current = allPixels[0];
+    orderedLocations.push(current);
+    visited.add(`${current.x},${current.y}`);
+    
+    // Continue until all pixels are visited
+    while (orderedLocations.length < allPixels.length) {
+        let nextPixel = null;
+        let minDistance = Infinity;
+        
+        // Check 8 neighbors of current pixel first
+        const neighbors = [
+            {x: current.x - 1, y: current.y - 1}, // top-left
+            {x: current.x, y: current.y - 1},     // top
+            {x: current.x + 1, y: current.y - 1}, // top-right
+            {x: current.x - 1, y: current.y},     // left
+            {x: current.x + 1, y: current.y},     // right
+            {x: current.x - 1, y: current.y + 1}, // bottom-left
+            {x: current.x, y: current.y + 1},     // bottom
+            {x: current.x + 1, y: current.y + 1}  // bottom-right
+        ];
+        
+        // Look for adjacent unvisited pixel of the same color
+        for (const neighbor of neighbors) {
+            const key = `${neighbor.x},${neighbor.y}`;
+            if (pixelSet.has(key) && !visited.has(key)) {
+                nextPixel = neighbor;
+                break; // Found adjacent pixel, use it immediately
+            }
+        }
+        
+        // If no adjacent pixel, find the nearest unvisited pixel
+        if (!nextPixel) {
+            for (const pixel of allPixels) {
+                const key = `${pixel.x},${pixel.y}`;
+                if (!visited.has(key)) {
+                    const dist = Math.abs(pixel.x - current.x) + Math.abs(pixel.y - current.y);
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        nextPixel = pixel;
+                    }
+                }
+            }
+        }
+        
+        if (nextPixel) {
+            orderedLocations.push(nextPixel);
+            visited.add(`${nextPixel.x},${nextPixel.y}`);
+            current = nextPixel;
+        } else {
+            break; // No more pixels to visit
+        }
+    }
+    
+    return orderedLocations;
 }
 
 // Navigate to a specific pixel location
