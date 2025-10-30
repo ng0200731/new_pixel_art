@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <h1>Broadloom Image to Yarn Converter</h1>
-            <div class="version">Version: 2.9.47</div>
+            <div class="version">Version: 2.9.67</div>
         </header>
 
         <div class="main-content">
@@ -103,6 +103,13 @@
                         <span class="checkbox-label">Auto K (recommend best K)</span>
                     </label>
                     <div id="auto-k-note" class="recommendation"></div>
+                    
+                    <label class="section-title" style="margin-top: 16px;">Color Distance Method:</label>
+                    <div class="distance-method-buttons">
+                        <button id="distance-rgb" class="distance-btn active" data-method="rgb">Simple RGB</button>
+                        <button id="distance-hsv" class="distance-btn" data-method="hsv">HSV</button>
+                        <button id="distance-lab" class="distance-btn" data-method="lab">CIEDE2000</button>
+                    </div>
                 </div>
 
                 <div class="control-section action-buttons">

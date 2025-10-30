@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.63
+// Version: 2.9.67
 
-const VERSION = '2.9.63';
+const VERSION = '2.9.67';
 
 // Global state
 let originalImage = null;
@@ -16,6 +16,7 @@ let highlightedColorIndex = -1;
 let highlightCanvas = null;
 let highlightLocked = false; // Whether highlight is locked by click
 let lockedColorIndex = null; // Which color is locked
+let highlightVisibleInMagnifier = true; // Toggle highlight visibility in magnifier with Shift key
 let currentSort = 'brightness'; // 'brightness' or 'pixels'
 let colorData = null; // Store color data for sorting
 let showGrid = false;
@@ -97,6 +98,9 @@ const elements = {
     sortPixels: document.getElementById('sort-pixels'),
     autoK: document.getElementById('auto-k'),
     autoKNote: document.getElementById('auto-k-note'),
+    distanceRgb: document.getElementById('distance-rgb'),
+    distanceHsv: document.getElementById('distance-hsv'),
+    distanceLab: document.getElementById('distance-lab'),
     replaceButton: document.getElementById('replace-color-btn'),
     replaceInstructions: document.getElementById('replace-instructions'),
     imageInfo: document.getElementById('image-info'),
@@ -164,6 +168,11 @@ function initializeEventListeners() {
             elements.autoKNote.textContent = '';
         }
     });
+    
+    // Distance Method buttons
+    elements.distanceRgb?.addEventListener('click', () => switchDistanceMethod('rgb'));
+    elements.distanceHsv?.addEventListener('click', () => switchDistanceMethod('hsv'));
+    elements.distanceLab?.addEventListener('click', () => switchDistanceMethod('lab'));
     
     // Action buttons
     elements.convertBtn.addEventListener('click', convertImage);
@@ -276,18 +285,23 @@ function initializeEventListeners() {
         openPaletteProofPopup(e.clientX, e.clientY);
     });
     
-    // Shift key to toggle highlight on/off (preserve selected color)
+    // Shift key to toggle highlight visibility in magnifier
     const onKey = (e) => {
         const key = e.key;
         if (e.key === 'Shift') {
-            highlightLocked = !highlightLocked;
-            if (highlightLocked) {
-                if (lockedColorIndex !== null) {
-                    highlightColorPixels(lockedColorIndex);
+            highlightVisibleInMagnifier = !highlightVisibleInMagnifier;
+            
+            // Redraw magnifier if active
+            if (magnifierActive && elements.quantizedCanvas) {
+                const rect = elements.quantizedCanvas.getBoundingClientRect();
+                const u = (lastMouseX - rect.left) / rect.width;
+                const v = (lastMouseY - rect.top) / rect.height;
+                if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
+                    drawMagnifier(u, v);
                 }
-            } else {
-                clearHighlight();
             }
+            
+            showKeyPopup(highlightVisibleInMagnifier ? 'Highlight ON' : 'Highlight OFF');
             return;
         }
 
@@ -740,10 +754,17 @@ function performIterativeReplace(){
     
     // Map ignored hexes to indices once
     const ignoredIdx = new Set();
+    console.log(`Ignored hexes:`, Array.from(ignoredHexes));
     ignoredHexes.forEach(h => {
         const idx = findColorIndexByHex(h);
-        if (idx != null) ignoredIdx.add(idx);
+        if (idx != null) {
+            ignoredIdx.add(idx);
+            console.log(`  ${h} -> index ${idx} (${rgbToHex(quantizedResult.centroids[idx])})`);
+        } else {
+            console.log(`  ${h} -> NOT FOUND in palette`);
+        }
     });
+    console.log(`Ignored color indices:`, Array.from(ignoredIdx));
     
     let iteration = 0;
     let previousCount = -1;
@@ -783,12 +804,25 @@ function performIterativeReplace(){
         function uniqueNeighborTarget(i){
             const x = i % width; const y = (i - x) / width;
             const candidates = new Set();
-            if (x > 0) candidates.add(assignments[i-1]);
-            if (x+1 < width) candidates.add(assignments[i+1]);
-            if (y > 0) candidates.add(assignments[i-width]);
-            if (y+1 < height) candidates.add(assignments[i+width]);
+            
+            // Check only 4 neighbors (NO diagonals)
+            if (x > 0) candidates.add(assignments[i-1]);                    // left
+            if (x+1 < width) candidates.add(assignments[i+1]);              // right
+            if (y > 0) candidates.add(assignments[i-width]);                // top
+            if (y+1 < height) candidates.add(assignments[i+width]);         // bottom
+            
+            // Remove the target color itself
             candidates.delete(lockedColorIndex);
+            
+            // Remove ignored colors
             ignoredIdx.forEach(idx => candidates.delete(idx));
+            
+            // Debug specific pixel
+            if (x === 107 && y === 353) {
+                console.log(`Pixel (${x}, ${y}): candidates before filter =`, Array.from(candidates).map(c => rgbToHex(quantizedResult.centroids[c])));
+                console.log(`Locked color: ${lockedColorIndex}, Ignored indices:`, Array.from(ignoredIdx));
+            }
+            
             if (candidates.size === 1) return [...candidates][0];
             return -1;
         }
@@ -1489,7 +1523,8 @@ function drawMagnifier(u, v) {
         
         // In magnifier: overlay yellow-highlighted pixels using the same source window
         // Show highlights for both single-color and multi-color selections
-        if (highlightCanvas && (highlightedColorIndex >= 0 || multiColorSelectedIndices.size > 0)) {
+        // Toggle visibility with Shift key
+        if (highlightVisibleInMagnifier && highlightCanvas && (highlightedColorIndex >= 0 || multiColorSelectedIndices.size > 0)) {
             magnifierCtx.imageSmoothingEnabled = false;
             magnifierCtx.drawImage(
                 highlightCanvas,
@@ -1589,15 +1624,28 @@ function drawMagnifierOriginal(u, v) {
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, magnifierSize, magnifierSize);
     
-    // Map normalized coords to integer pixel on original canvas
-    const ox = Math.floor(u * elements.originalCanvas.width);
-    const oy = Math.floor(v * elements.originalCanvas.height);
+    // Use same pixel coordinates as the pixel lens for consistency
+    let ox, oy;
+    if (lastPixelX >= 0 && lastPixelY >= 0) {
+        ox = lastPixelX;
+        oy = lastPixelY;
+    } else {
+        // Use quantizedCanvas coordinates (same as pixel lens)
+        ox = Math.floor(u * elements.quantizedCanvas.width);
+        oy = Math.floor(v * elements.quantizedCanvas.height);
+    }
+    
     // Integer-aligned source window like pixel lens
     let srcX = Math.floor(ox - sourceSize / 2);
     let srcY = Math.floor(oy - sourceSize / 2);
-    // Clamp to bounds
-    srcX = Math.max(0, Math.min(srcX, elements.originalCanvas.width - sourceSize));
-    srcY = Math.max(0, Math.min(srcY, elements.originalCanvas.height - sourceSize));
+    // Clamp to bounds (use currentImageData dimensions, not canvas dimensions)
+    if (currentImageData) {
+        srcX = Math.max(0, Math.min(srcX, currentImageData.width - sourceSize));
+        srcY = Math.max(0, Math.min(srcY, currentImageData.height - sourceSize));
+    } else {
+        srcX = Math.max(0, Math.min(srcX, elements.originalCanvas.width - sourceSize));
+        srcY = Math.max(0, Math.min(srcY, elements.originalCanvas.height - sourceSize));
+    }
 
     // Draw original window scaled
     ctx.drawImage(
@@ -1979,6 +2027,35 @@ function updateImageInfo() {
     `;
 }
 
+// Switch color distance calculation method
+function switchDistanceMethod(method) {
+    console.log(`[app.js] Switching distance method to: ${method}`);
+    
+    // Update button active states
+    document.querySelectorAll('.distance-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    if (method === 'rgb') {
+        elements.distanceRgb?.classList.add('active');
+    } else if (method === 'hsv') {
+        elements.distanceHsv?.classList.add('active');
+    } else if (method === 'lab') {
+        elements.distanceLab?.classList.add('active');
+    }
+    
+    // Set the method in kmeans.js
+    if (typeof setDistanceMethod === 'function') {
+        setDistanceMethod(method);
+    }
+    
+    // Reconvert the image if we have one loaded
+    if (originalImage && currentImageData) {
+        console.log('[app.js] Reconverting image with new distance method...');
+        convertImage();
+    }
+}
+
 // Convert image using K-means
 async function convertImage() {
     if (!currentImageData) {
@@ -2183,6 +2260,14 @@ function displayColorPalette(colors, stats, originalIndices) {
                     // Lock and display highlight for the selected source color
                     highlightLocked = true;
                     lockedColorIndex = item.originalIndex;
+                    
+                    // Stop multi-color flashing and clear selections
+                    stopMultiColorFlashing();
+                    multiColorSelectedIndices.clear();
+                    document.querySelectorAll('#adjacent-multi-target-options .adjacent-swatch').forEach(s => {
+                        s.classList.remove('active');
+                    });
+                    
                     highlightColorPixels(item.originalIndex);
                     // Show instruction to pick the replacement
                     if (elements.replaceInstructions) {
@@ -2211,6 +2296,14 @@ function displayColorPalette(colors, stats, originalIndices) {
                 lockedColorIndex = item.originalIndex;
                 document.querySelectorAll('.color-row').forEach(r => r.classList.remove('active'));
                 row.classList.add('active');
+                
+                // Stop multi-color flashing and clear selections
+                stopMultiColorFlashing();
+                multiColorSelectedIndices.clear();
+                document.querySelectorAll('#adjacent-multi-target-options .adjacent-swatch').forEach(s => {
+                    s.classList.remove('active');
+                });
+                
                 highlightColorPixels(item.originalIndex);
             }
         });
@@ -2276,6 +2369,24 @@ function displayColorPalette(colors, stats, originalIndices) {
                 }
             };
             sw.appendChild(findBtn);
+            
+            // Add click handler to highlight this color (single-color mode)
+            sw.addEventListener('click', (e) => {
+                // Don't trigger if clicking Find or Reset buttons
+                if (e.target.closest('.find-icon') || e.target.closest('.reset-icon')) return;
+                
+                // Stop multi-color flashing
+                stopMultiColorFlashing();
+                
+                // Clear multi-color selections
+                multiColorSelectedIndices.clear();
+                document.querySelectorAll('#adjacent-multi-target-options .adjacent-swatch').forEach(s => {
+                    s.classList.remove('active');
+                });
+                
+                // Highlight this color in solid yellow
+                highlightColorPixels(item.originalIndex);
+            });
             
             elements.adjacentTargetOptions.appendChild(sw);
         });
@@ -2367,6 +2478,14 @@ function displayColorPalette(colors, stats, originalIndices) {
                 if (elements.ignoreMultiColorBtn) {
                     elements.ignoreMultiColorBtn.disabled = selectedCount < 2;
                 }
+                
+                // Clear any single-color highlighting
+                highlightLocked = false;
+                lockedColorIndex = null;
+                document.querySelectorAll('.color-row').forEach(r => r.classList.remove('active'));
+                document.querySelectorAll('#adjacent-target-options .adjacent-swatch').forEach(s => {
+                    s.classList.remove('active');
+                });
                 
                 // Start or stop flashing based on selection
                 if (selectedCount > 0) {
@@ -2675,12 +2794,177 @@ document.addEventListener('DOMContentLoaded', function() {
             const idx = (cy * currentImageData.width + cx) * 4;
             if (idx < 0 || idx + 2 >= currentImageData.data.length) { console.log('Out of bounds'); return; }
             const p = [currentImageData.data[idx], currentImageData.data[idx+1], currentImageData.data[idx+2]];
-            const dists = quantizedResult.centroids.map((c,i)=>({ i, hex: rgbToHex(c), d: colorDistance(p,c) })).sort((a,b)=>a.d-b.d);
+            
+            console.log('═══════════════════════════════════════════════════════════');
+            console.log(`📍 PIXEL ANALYSIS at (${cx}, ${cy})`);
+            console.log('═══════════════════════════════════════════════════════════');
+            console.log(`Original RGB: RGB(${p[0]}, ${p[1]}, ${p[2]}) = ${rgbToHex(p)}`);
+            console.log('');
+            console.log(`K = ${quantizedResult.centroids.length}`);
+            console.log('K-Palette Colors:');
+            quantizedResult.centroids.forEach((c, i) => {
+                console.log(`  Color ${i}: RGB(${c[0]}, ${c[1]}, ${c[2]}) = ${rgbToHex(c)}`);
+            });
+            console.log('');
+            console.log('Distance Calculation (Weighted Euclidean):');
+            console.log('Formula: distance = √[0.30×ΔR² + 0.59×ΔG² + 0.11×ΔB²]');
+            console.log('');
+            
+            const dists = quantizedResult.centroids.map((c,i)=>{
+                const dr = p[0] - c[0];
+                const dg = p[1] - c[1];
+                const db = p[2] - c[2];
+                const dist = Math.sqrt(0.30 * dr * dr + 0.59 * dg * dg + 0.11 * db * db);
+                
+                console.log(`Color ${i}: ${rgbToHex(c)}`);
+                console.log(`  ΔR = ${p[0]} - ${c[0]} = ${dr}`);
+                console.log(`  ΔG = ${p[1]} - ${c[1]} = ${dg}`);
+                console.log(`  ΔB = ${p[2]} - ${c[2]} = ${db}`);
+                console.log(`  distance = √[0.30×${dr}² + 0.59×${dg}² + 0.11×${db}²]`);
+                console.log(`  distance = √[${(0.30*dr*dr).toFixed(2)} + ${(0.59*dg*dg).toFixed(2)} + ${(0.11*db*db).toFixed(2)}]`);
+                console.log(`  distance = √${(0.30*dr*dr + 0.59*dg*dg + 0.11*db*db).toFixed(2)}`);
+                console.log(`  distance = ${dist.toFixed(4)} ${i === 0 ? '← CLOSEST! ✓' : ''}`);
+                console.log('');
+                
+                return { i, hex: rgbToHex(c), rgb: `RGB(${c[0]},${c[1]},${c[2]})`, d: dist };
+            });
+            
+            dists.sort((a,b)=>a.d-b.d);
+            console.log('SUMMARY (sorted by distance):');
             console.table(dists);
+            console.log(`✓ Pixel assigned to: ${dists[0].hex} (${dists[0].rgb})`);
+            console.log('═══════════════════════════════════════════════════════════');
+            
             if (quantizedResult.debug) {
-                console.log('Seeds/Initial medoids/centroids:', quantizedResult.debug.seeds || '(n/a)');
-                console.log('Medoids/Centroids by iteration:', quantizedResult.debug.medoidsByIter || quantizedResult.debug.centroidsByIter || '(n/a)');
+                console.log('');
+                console.log('═══════════════════════════════════════════════════════════');
+                console.log('🔧 K-MEANS/K-MEDOIDS ALGORITHM TRACE:');
+                console.log('═══════════════════════════════════════════════════════════');
+                
+                if (quantizedResult.debug.seeds) {
+                    console.log('Initial Seeds (Starting Colors):');
+                    quantizedResult.debug.seeds.forEach((seed, i) => {
+                        console.log(`  Seed ${i}: RGB(${seed[0]}, ${seed[1]}, ${seed[2]}) = ${rgbToHex(seed)}`);
+                    });
+                }
+                
+                const iters = quantizedResult.debug.medoidsByIter || quantizedResult.debug.centroidsByIter;
+                if (iters) {
+                    console.log('');
+                    console.log(`Total Iterations: ${iters.length}`);
+                    console.log('');
+                    
+                    iters.forEach((iterColors, idx) => {
+                        console.log(`Iteration ${idx}:`);
+                        iterColors.forEach((color, i) => {
+                            console.log(`  Color ${i}: RGB(${color[0]}, ${color[1]}, ${color[2]}) = ${rgbToHex(color)}`);
+                        });
+                        console.log('');
+                    });
+                    
+                    console.log('Final Converged Colors:');
+                    quantizedResult.centroids.forEach((c, i) => {
+                        console.log(`  Color ${i}: RGB(${c[0]}, ${c[1]}, ${c[2]}) = ${rgbToHex(c)}`);
+                    });
+                }
+                console.log('═══════════════════════════════════════════════════════════');
             }
+        }
+    });
+
+    // Debug: press 'C' to show color histogram (all unique colors)
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'c') {
+            if (!currentImageData) { console.log('No image loaded yet.'); return; }
+            
+            console.log('═══════════════════════════════════════════════════════════');
+            console.log('🎨 COLOR HISTOGRAM - All Unique Colors in Image');
+            console.log('═══════════════════════════════════════════════════════════');
+            
+            const colorMap = new Map();
+            const data = currentImageData.data;
+            const totalPixels = currentImageData.width * currentImageData.height;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const key = `${r},${g},${b}`;
+                colorMap.set(key, (colorMap.get(key) || 0) + 1);
+            }
+            
+            const colorArray = Array.from(colorMap.entries()).map(([key, count]) => {
+                const [r, g, b] = key.split(',').map(Number);
+                const percentage = (count / totalPixels * 100).toFixed(2);
+                return {
+                    hex: rgbToHex([r, g, b]),
+                    rgb: `RGB(${r},${g},${b})`,
+                    pixels: count,
+                    percent: percentage
+                };
+            });
+            
+            // Sort by frequency (most common first)
+            colorArray.sort((a, b) => b.pixels - a.pixels);
+            
+            console.log(`Total unique colors: ${colorArray.length}`);
+            console.log(`Total pixels: ${totalPixels}`);
+            console.log('');
+            console.log('Top 50 most common colors:');
+            console.table(colorArray.slice(0, 50));
+            
+            // Show color distribution
+            console.log('');
+            console.log('Color Distribution:');
+            const ranges = [
+                { name: 'Very Common (>5%)', colors: colorArray.filter(c => parseFloat(c.percent) > 5) },
+                { name: 'Common (1-5%)', colors: colorArray.filter(c => parseFloat(c.percent) >= 1 && parseFloat(c.percent) <= 5) },
+                { name: 'Moderate (0.1-1%)', colors: colorArray.filter(c => parseFloat(c.percent) >= 0.1 && parseFloat(c.percent) < 1) },
+                { name: 'Rare (<0.1%)', colors: colorArray.filter(c => parseFloat(c.percent) < 0.1) }
+            ];
+            
+            ranges.forEach(range => {
+                console.log(`  ${range.name}: ${range.colors.length} colors`);
+            });
+            
+            console.log('');
+            console.log('To find a specific color range, use:');
+            console.log('  Pink range: RGB(200-255, 100-200, 100-200)');
+            console.log('  Gray range: RGB(100-180, 100-180, 100-180)');
+            
+            const pinkColors = colorArray.filter(c => {
+                const match = c.rgb.match(/RGB\((\d+),(\d+),(\d+)\)/);
+                if (!match) return false;
+                const [_, r, g, b] = match.map(Number);
+                return r >= 200 && r <= 255 && g >= 100 && g <= 200 && b >= 100 && b <= 200;
+            });
+            
+            const grayColors = colorArray.filter(c => {
+                const match = c.rgb.match(/RGB\((\d+),(\d+),(\d+)\)/);
+                if (!match) return false;
+                const [_, r, g, b] = match.map(Number);
+                return r >= 100 && r <= 180 && g >= 100 && g <= 180 && b >= 100 && b <= 180;
+            });
+            
+            console.log('');
+            console.log(`Pink-ish colors found: ${pinkColors.length}`);
+            if (pinkColors.length > 0) {
+                console.log('Top pink colors:');
+                console.table(pinkColors.slice(0, 10));
+                const totalPinkPixels = pinkColors.reduce((sum, c) => sum + c.pixels, 0);
+                console.log(`Total pink pixels: ${totalPinkPixels} (${(totalPinkPixels/totalPixels*100).toFixed(2)}%)`);
+            }
+            
+            console.log('');
+            console.log(`Gray-ish colors found: ${grayColors.length}`);
+            if (grayColors.length > 0) {
+                console.log('Top gray colors:');
+                console.table(grayColors.slice(0, 10));
+                const totalGrayPixels = grayColors.reduce((sum, c) => sum + c.pixels, 0);
+                console.log(`Total gray pixels: ${totalGrayPixels} (${(totalGrayPixels/totalPixels*100).toFixed(2)}%)`);
+            }
+            
+            console.log('═══════════════════════════════════════════════════════════');
         }
     });
 

@@ -1,19 +1,113 @@
 // K-means clustering algorithm for color quantization
-// Version: 2.9.41
+// Version: 2.9.67
 
-// Helper: Calculate weighted perceptual distance (prevents black→red merging)
+// Global variable to track current distance method
+let currentDistanceMethod = 'rgb'; // 'rgb', 'hsv', or 'lab'
+
+// Helper: RGB to HSV conversion
+function rgbToHsv(r, g, b) {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    
+    let h = 0, s = 0, v = max;
+    
+    if (delta !== 0) {
+        s = delta / max;
+        
+        if (max === r) {
+            h = ((g - b) / delta + (g < b ? 6 : 0)) / 6;
+        } else if (max === g) {
+            h = ((b - r) / delta + 2) / 6;
+        } else {
+            h = ((r - g) / delta + 4) / 6;
+        }
+    }
+    
+    return [h, s, v];
+}
+
+// Helper: RGB to LAB conversion (via XYZ)
+function rgbToLab(r, g, b) {
+    // Normalize RGB
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    
+    // Apply gamma correction
+    r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+    g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+    b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+    
+    // Convert to XYZ (D65 illuminant)
+    let x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) * 100;
+    let y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750) * 100;
+    let z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) * 100;
+    
+    // Normalize for D65 white point
+    x /= 95.047;
+    y /= 100.000;
+    z /= 108.883;
+    
+    // Convert to LAB
+    x = x > 0.008856 ? Math.pow(x, 1/3) : (7.787 * x + 16/116);
+    y = y > 0.008856 ? Math.pow(y, 1/3) : (7.787 * y + 16/116);
+    z = z > 0.008856 ? Math.pow(z, 1/3) : (7.787 * z + 16/116);
+    
+    const L = (116 * y) - 16;
+    const A = 500 * (x - y);
+    const B = 200 * (y - z);
+    
+    return [L, A, B];
+}
+
+// Helper: Calculate color distance based on current method
 function colorDistance(c1, c2) {
+    if (currentDistanceMethod === 'rgb') {
+        // Simple RGB Distance (unweighted Euclidean)
+        const dr = c1[0] - c2[0];
+        const dg = c1[1] - c2[1];
+        const db = c1[2] - c2[2];
+        return Math.sqrt(dr * dr + dg * dg + db * db);
+        
+    } else if (currentDistanceMethod === 'hsv') {
+        // HSV Distance
+        const hsv1 = rgbToHsv(c1[0], c1[1], c1[2]);
+        const hsv2 = rgbToHsv(c2[0], c2[1], c2[2]);
+        
+        const dh = hsv1[0] - hsv2[0];
+        const ds = hsv1[1] - hsv2[1];
+        const dv = hsv1[2] - hsv2[2];
+        
+        return Math.sqrt(dh * dh + ds * ds + dv * dv);
+        
+    } else if (currentDistanceMethod === 'lab') {
+        // CIEDE2000 (simplified as LAB Euclidean distance)
+        const lab1 = rgbToLab(c1[0], c1[1], c1[2]);
+        const lab2 = rgbToLab(c2[0], c2[1], c2[2]);
+        
+        const dL = lab1[0] - lab2[0];
+        const dA = lab1[1] - lab2[1];
+        const dB = lab1[2] - lab2[2];
+        
+        return Math.sqrt(dL * dL + dA * dA + dB * dB);
+    }
+    
+    // Fallback to simple RGB
     const dr = c1[0] - c2[0];
     const dg = c1[1] - c2[1];
     const db = c1[2] - c2[2];
-    
-    // Perceptual weights based on human color sensitivity
-    // Green is weighted highest because humans are most sensitive to green
-    const weightR = 0.30;
-    const weightG = 0.59;
-    const weightB = 0.11;
-    
-    return Math.sqrt(weightR * dr * dr + weightG * dg * dg + weightB * db * db);
+    return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+// Function to set distance method (called from app.js)
+function setDistanceMethod(method) {
+    currentDistanceMethod = method;
+    console.log(`[kmeans.js] Distance method changed to: ${method}`);
 }
 
 // Helper: Find the closest centroid for a given color
