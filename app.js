@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.72
+// Version: 2.9.77
 
-const VERSION = '2.9.72';
+const VERSION = '2.9.77';
 
 // Global state
 let originalImage = null;
@@ -40,6 +40,10 @@ let adjacentReplacedColors = new Set(); // colors modified by adjacent replaceme
 let adjacentReplacementHistory = new Map(); // Map<colorIndex, original assignments> for undo
 let keyPopupTimer = null; // toast timer for key press popup
 let patternImages = []; // Array of pattern images loaded by user
+let draggedPattern = null; // Currently dragged pattern
+let patternOverlayCanvas = null; // Canvas for pattern hover preview
+let hoveredColorIndex = -1; // Color region being hovered during pattern drag
+let patternOverlays = new Map(); // Map<colorIndex, {patternData, canvas}> for applied patterns
 
 function showKeyPopup(label){
     let el = document.getElementById('key-popup');
@@ -260,6 +264,11 @@ function initializeEventListeners() {
         addIgnoreChip(rgbToHex(quantizedResult.centroids[colorIdx]));
         evaluateSurroundingCandidate();
     });
+    
+    // Pattern drag and drop on canvas
+    elements.quantizedCanvas.addEventListener('dragover', handlePatternDragOverCanvas);
+    elements.quantizedCanvas.addEventListener('dragleave', handlePatternDragLeaveCanvas);
+    elements.quantizedCanvas.addEventListener('drop', handlePatternDropOnCanvas);
 
     elements.replaceSurroundBtn?.addEventListener('click', () => {
         if (lockedColorIndex == null) return;
@@ -1805,6 +1814,20 @@ function addPatternToList(patternData) {
     const img = document.createElement('img');
     img.src = patternData.src;
     img.alt = 'Pattern';
+    img.draggable = true; // Make image draggable
+    
+    // Drag event handlers
+    img.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('patternId', patternData.id);
+        draggedPattern = patternData;
+        img.style.opacity = '0.5';
+    });
+    
+    img.addEventListener('dragend', (e) => {
+        img.style.opacity = '1';
+        draggedPattern = null;
+    });
     
     // Create clear button
     const clearBtn = document.createElement('button');
@@ -1832,6 +1855,248 @@ function removePattern(patternId) {
             item.remove();
         }
     }
+}
+
+// Pattern drag over canvas - show pink flashing border on hovered color region
+function handlePatternDragOverCanvas(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    
+    if (!draggedPattern || !quantizedResult) return;
+    
+    // Get pixel coordinates
+    const rect = elements.quantizedCanvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left) * elements.quantizedCanvas.width / rect.width);
+    const y = Math.floor((e.clientY - rect.top) * elements.quantizedCanvas.height / rect.height);
+    
+    if (x < 0 || x >= elements.quantizedCanvas.width || y < 0 || y >= elements.quantizedCanvas.height) {
+        clearPatternHoverEffect();
+        return;
+    }
+    
+    // Get color index at this position
+    const idx = y * elements.quantizedCanvas.width + x;
+    const colorIdx = quantizedResult.assignments[idx];
+    
+    // If hovering over a different color region, update the effect
+    if (colorIdx !== hoveredColorIndex) {
+        hoveredColorIndex = colorIdx;
+        showPatternHoverEffect(colorIdx);
+    }
+}
+
+// Pattern drag leave canvas - clear pink border
+function handlePatternDragLeaveCanvas(e) {
+    clearPatternHoverEffect();
+}
+
+// Pattern drop on canvas - apply pattern overlay to the color region
+function handlePatternDropOnCanvas(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!draggedPattern || !quantizedResult) {
+        console.log('Drop cancelled - missing pattern or result');
+        clearPatternHoverEffect();
+        return;
+    }
+    
+    // Calculate the color index at drop position
+    const rect = elements.quantizedCanvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left) * elements.quantizedCanvas.width / rect.width);
+    const y = Math.floor((e.clientY - rect.top) * elements.quantizedCanvas.height / rect.height);
+    
+    if (x < 0 || x >= elements.quantizedCanvas.width || y < 0 || y >= elements.quantizedCanvas.height) {
+        console.log('Drop cancelled - outside canvas bounds');
+        clearPatternHoverEffect();
+        return;
+    }
+    
+    const idx = y * elements.quantizedCanvas.width + x;
+    const colorIdx = quantizedResult.assignments[idx];
+    
+    console.log('Pattern dropped on canvas at', {x, y, colorIdx});
+    
+    // Apply pattern to the color region at drop position
+    applyPatternToRegion(colorIdx, draggedPattern);
+    
+    // Clear hover effect
+    clearPatternHoverEffect();
+}
+
+// Show pink flashing border effect on color region
+function showPatternHoverEffect(colorIndex) {
+    if (!quantizedResult || !elements.quantizedCanvas) return;
+    
+    // Clear any existing overlay
+    clearPatternHoverEffect();
+    
+    // Create overlay canvas if it doesn't exist
+    if (!patternOverlayCanvas) {
+        patternOverlayCanvas = document.createElement('canvas');
+        patternOverlayCanvas.width = elements.quantizedCanvas.width;
+        patternOverlayCanvas.height = elements.quantizedCanvas.height;
+        patternOverlayCanvas.style.position = 'absolute';
+        patternOverlayCanvas.style.top = '0';
+        patternOverlayCanvas.style.left = '0';
+        patternOverlayCanvas.style.pointerEvents = 'none';
+        patternOverlayCanvas.style.imageRendering = 'pixelated';
+        patternOverlayCanvas.style.width = '100%';
+        patternOverlayCanvas.style.height = '100%';
+        elements.quantizedCanvas.parentElement.style.position = 'relative';
+        elements.quantizedCanvas.parentElement.appendChild(patternOverlayCanvas);
+    }
+    
+    // Draw pink flashing border around the region
+    drawPatternHoverBorder(colorIndex);
+}
+
+// Draw pink flashing border around color region
+function drawPatternHoverBorder(colorIndex) {
+    if (!patternOverlayCanvas || !quantizedResult) return;
+    
+    const ctx = patternOverlayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, patternOverlayCanvas.width, patternOverlayCanvas.height);
+    
+    const width = elements.quantizedCanvas.width;
+    const height = elements.quantizedCanvas.height;
+    
+    // Create image data for the border
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+    
+    // Find edges of the color region
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const idx = y * width + x;
+            
+            if (quantizedResult.assignments[idx] === colorIndex) {
+                // Check if this pixel is on the edge
+                const isEdge = (
+                    x === 0 || x === width - 1 ||
+                    y === 0 || y === height - 1 ||
+                    (x > 0 && quantizedResult.assignments[idx - 1] !== colorIndex) ||
+                    (x < width - 1 && quantizedResult.assignments[idx + 1] !== colorIndex) ||
+                    (y > 0 && quantizedResult.assignments[idx - width] !== colorIndex) ||
+                    (y < height - 1 && quantizedResult.assignments[idx + width] !== colorIndex)
+                );
+                
+                if (isEdge) {
+                    const pixelIdx = idx * 4;
+                    data[pixelIdx] = 255;     // R - Pink
+                    data[pixelIdx + 1] = 105; // G
+                    data[pixelIdx + 2] = 180; // B
+                    data[pixelIdx + 3] = 255; // A - Full opacity
+                }
+            }
+        }
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+    
+    // Add flashing animation
+    let flashCount = 0;
+    const flashInterval = setInterval(() => {
+        if (!patternOverlayCanvas || hoveredColorIndex !== colorIndex) {
+            clearInterval(flashInterval);
+            return;
+        }
+        
+        patternOverlayCanvas.style.opacity = flashCount % 2 === 0 ? '1' : '0.5';
+        flashCount++;
+        
+        if (flashCount > 10) {
+            clearInterval(flashInterval);
+        }
+    }, 200);
+}
+
+// Clear pattern hover effect
+function clearPatternHoverEffect() {
+    hoveredColorIndex = -1;
+    
+    if (patternOverlayCanvas) {
+        const ctx = patternOverlayCanvas.getContext('2d');
+        ctx.clearRect(0, 0, patternOverlayCanvas.width, patternOverlayCanvas.height);
+        if (patternOverlayCanvas.parentElement) {
+            patternOverlayCanvas.parentElement.removeChild(patternOverlayCanvas);
+        }
+        patternOverlayCanvas = null;
+    }
+}
+
+// Apply pattern to replace color region pixels
+function applyPatternToRegion(colorIndex, patternData) {
+    console.log('applyPatternToRegion called', colorIndex, patternData);
+    
+    if (!quantizedResult || !elements.quantizedCanvas || !currentImageData) {
+        console.error('Missing required data:', {
+            quantizedResult: !!quantizedResult,
+            canvas: !!elements.quantizedCanvas,
+            currentImageData: !!currentImageData
+        });
+        return;
+    }
+    
+    const width = elements.quantizedCanvas.width;
+    const height = elements.quantizedCanvas.height;
+    
+    console.log('Canvas dimensions:', width, height);
+    
+    // Create a temporary canvas to draw the pattern
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.imageSmoothingEnabled = false;
+    
+    // Draw the pattern tiled across the canvas
+    const patternImg = patternData.img;
+    const patternWidth = patternImg.width;
+    const patternHeight = patternImg.height;
+    
+    console.log('Pattern dimensions:', patternWidth, patternHeight);
+    
+    for (let y = 0; y < height; y += patternHeight) {
+        for (let x = 0; x < width; x += patternWidth) {
+            tempCtx.drawImage(patternImg, x, y);
+        }
+    }
+    
+    // Get the pattern image data
+    const patternImageData = tempCtx.getImageData(0, 0, width, height);
+    const patternData_pixels = patternImageData.data;
+    
+    // Get the current quantized canvas data
+    const ctx = elements.quantizedCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const currentData = ctx.getImageData(0, 0, width, height);
+    const currentPixels = currentData.data;
+    
+    // Count how many pixels will be replaced
+    let replacedCount = 0;
+    
+    // Replace pixels that belong to this color with pattern pixels
+    for (let i = 0; i < quantizedResult.assignments.length; i++) {
+        if (quantizedResult.assignments[i] === colorIndex) {
+            const pixelIdx = i * 4;
+            currentPixels[pixelIdx] = patternData_pixels[pixelIdx];         // R
+            currentPixels[pixelIdx + 1] = patternData_pixels[pixelIdx + 1]; // G
+            currentPixels[pixelIdx + 2] = patternData_pixels[pixelIdx + 2]; // B
+            currentPixels[pixelIdx + 3] = 255;                              // A (keep opaque)
+            replacedCount++;
+        }
+    }
+    
+    console.log(`Replaced ${replacedCount} pixels for color ${colorIndex}`);
+    
+    // Update the canvas with the modified data
+    ctx.putImageData(currentData, 0, 0);
+    
+    // Store pattern application for this color
+    patternOverlays.set(colorIndex, { patternData, applied: true });
+    
+    console.log(`Pattern applied successfully to color region ${colorIndex}`);
 }
 
 // Process uploaded image file
@@ -2428,6 +2693,41 @@ function displayColorPalette(colors, stats, originalIndices) {
             }
         });
         
+        // Pattern drag and drop on palette rows
+        row.addEventListener('dragover', (e) => {
+            if (!draggedPattern || !quantizedResult) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            
+            // Show pattern hover effect for this color
+            if (hoveredColorIndex !== item.originalIndex) {
+                hoveredColorIndex = item.originalIndex;
+                showPatternHoverEffect(item.originalIndex);
+            }
+        });
+        
+        row.addEventListener('dragleave', (e) => {
+            if (!draggedPattern) return;
+            clearPatternHoverEffect();
+        });
+        
+        row.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            console.log('Pattern dropped on palette row', item.originalIndex);
+            
+            if (!draggedPattern || !quantizedResult) {
+                console.log('Drop cancelled on palette - missing data');
+                clearPatternHoverEffect();
+                return;
+            }
+            
+            // Apply pattern to this color region
+            applyPatternToRegion(item.originalIndex, draggedPattern);
+            clearPatternHoverEffect();
+        });
+        
         elements.paletteRows.appendChild(row);
     });
 
@@ -2506,6 +2806,41 @@ function displayColorPalette(colors, stats, originalIndices) {
                 
                 // Highlight this color in solid yellow
                 highlightColorPixels(item.originalIndex);
+            });
+            
+            // Pattern drag and drop on adjacent swatches
+            sw.addEventListener('dragover', (e) => {
+                if (!draggedPattern || !quantizedResult) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                
+                // Show pattern hover effect for this color
+                if (hoveredColorIndex !== item.originalIndex) {
+                    hoveredColorIndex = item.originalIndex;
+                    showPatternHoverEffect(item.originalIndex);
+                }
+            });
+            
+            sw.addEventListener('dragleave', (e) => {
+                if (!draggedPattern) return;
+                clearPatternHoverEffect();
+            });
+            
+            sw.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                console.log('Pattern dropped on adjacent swatch', item.originalIndex);
+                
+                if (!draggedPattern || !quantizedResult) {
+                    console.log('Drop cancelled on adjacent - missing data');
+                    clearPatternHoverEffect();
+                    return;
+                }
+                
+                // Apply pattern to this color region
+                applyPatternToRegion(item.originalIndex, draggedPattern);
+                clearPatternHoverEffect();
             });
             
             elements.adjacentTargetOptions.appendChild(sw);
@@ -2621,6 +2956,41 @@ function displayColorPalette(colors, stats, originalIndices) {
             if (multiColorSelectedIndices.has(item.originalIndex)) {
                 sw.classList.add('active');
             }
+            
+            // Pattern drag and drop on adjacent multi swatches
+            sw.addEventListener('dragover', (e) => {
+                if (!draggedPattern || !quantizedResult) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                
+                // Show pattern hover effect for this color
+                if (hoveredColorIndex !== item.originalIndex) {
+                    hoveredColorIndex = item.originalIndex;
+                    showPatternHoverEffect(item.originalIndex);
+                }
+            });
+            
+            sw.addEventListener('dragleave', (e) => {
+                if (!draggedPattern) return;
+                clearPatternHoverEffect();
+            });
+            
+            sw.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                console.log('Pattern dropped on adjacent multi swatch', item.originalIndex);
+                
+                if (!draggedPattern || !quantizedResult) {
+                    console.log('Drop cancelled on adjacent multi - missing data');
+                    clearPatternHoverEffect();
+                    return;
+                }
+                
+                // Apply pattern to this color region
+                applyPatternToRegion(item.originalIndex, draggedPattern);
+                clearPatternHoverEffect();
+            });
             
             elements.adjacentMultiTargetOptions.appendChild(sw);
         });
