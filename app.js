@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.68
+// Version: 2.9.71
 
-const VERSION = '2.9.68';
+const VERSION = '2.9.71';
 
 // Global state
 let originalImage = null;
@@ -39,7 +39,7 @@ let replacedColors = new Set(); // palette indices marked as replaced (show red 
 let adjacentReplacedColors = new Set(); // colors modified by adjacent replacement
 let adjacentReplacementHistory = new Map(); // Map<colorIndex, original assignments> for undo
 let keyPopupTimer = null; // toast timer for key press popup
-let patternImage = null; // Pattern image loaded by user
+let patternImages = []; // Array of pattern images loaded by user
 
 function showKeyPopup(label){
     let el = document.getElementById('key-popup');
@@ -126,9 +126,7 @@ const elements = {
     patternContent: document.getElementById('pattern-content'),
     patternUpload: document.getElementById('pattern-upload'),
     patternDropZone: document.getElementById('pattern-drop-zone'),
-    patternDisplay: document.getElementById('pattern-display'),
-    patternImage: document.getElementById('pattern-image'),
-    patternClearBtn: document.getElementById('pattern-clear-btn')
+    patternList: document.getElementById('pattern-list')
 };
 
 // Initialize event listeners
@@ -377,9 +375,7 @@ function initializeEventListeners() {
             elements.patternUpload && elements.patternUpload.click();
         });
     }
-    
-    // Pattern clear button
-    elements.patternClearBtn && elements.patternClearBtn.addEventListener('click', clearPattern);
+
 }
 
 // Helper: find centroid index by hex
@@ -1774,39 +1770,67 @@ function handlePatternFileSelect(e) {
 function processPatternFile(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
-        patternImage = new Image();
-        patternImage.onload = function() {
-            // Display the pattern image
-            if (elements.patternImage) {
-                elements.patternImage.src = e.target.result;
-            }
-            if (elements.patternDropZone) {
-                elements.patternDropZone.style.display = 'none';
-            }
-            if (elements.patternDisplay) {
-                elements.patternDisplay.style.display = 'block';
+        const img = new Image();
+        img.onload = function() {
+            // Add to pattern images array
+            const patternData = {
+                id: Date.now() + Math.random(), // unique ID
+                src: e.target.result,
+                img: img
+            };
+            patternImages.push(patternData);
+            
+            // Display the pattern
+            addPatternToList(patternData);
+            
+            // Reset the file input so the same file can be uploaded again
+            if (elements.patternUpload) {
+                elements.patternUpload.value = '';
             }
         };
-        patternImage.src = e.target.result;
+        img.src = e.target.result;
     };
     reader.readAsDataURL(file);
 }
 
-function clearPattern(e) {
-    e.stopPropagation(); // Prevent triggering the drop zone click
-    patternImage = null;
-    if (elements.patternImage) {
-        elements.patternImage.src = '';
-    }
-    if (elements.patternDropZone) {
-        elements.patternDropZone.style.display = 'block';
-    }
-    if (elements.patternDisplay) {
-        elements.patternDisplay.style.display = 'none';
-    }
-    // Reset the file input
-    if (elements.patternUpload) {
-        elements.patternUpload.value = '';
+function addPatternToList(patternData) {
+    if (!elements.patternList) return;
+    
+    // Create pattern item
+    const item = document.createElement('div');
+    item.className = 'pattern-item';
+    item.dataset.patternId = patternData.id;
+    
+    // Create image
+    const img = document.createElement('img');
+    img.src = patternData.src;
+    img.alt = 'Pattern';
+    
+    // Create clear button
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'pattern-item-clear';
+    clearBtn.innerHTML = '×';
+    clearBtn.title = 'Remove pattern';
+    clearBtn.onclick = (e) => {
+        e.stopPropagation();
+        removePattern(patternData.id);
+    };
+    
+    item.appendChild(img);
+    item.appendChild(clearBtn);
+    elements.patternList.appendChild(item);
+}
+
+function removePattern(patternId) {
+    // Remove from array
+    patternImages = patternImages.filter(p => p.id !== patternId);
+    
+    // Remove from DOM
+    if (elements.patternList) {
+        const item = elements.patternList.querySelector(`[data-pattern-id="${patternId}"]`);
+        if (item) {
+            item.remove();
+        }
     }
 }
 
