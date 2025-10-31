@@ -89,9 +89,9 @@
 
 .pattern-item {
     position: relative;
-    width: 100%;
-    min-height: 150px;
-    max-height: 200px;
+    width: 50%;
+    min-height: 75px;
+    max-height: 100px;
     border-radius: 6px;
     overflow: hidden;
     background: #f9fafb;

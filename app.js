@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.71
+// Version: 2.9.72
 
-const VERSION = '2.9.71';
+const VERSION = '2.9.72';
 
 // Global state
 let originalImage = null;
