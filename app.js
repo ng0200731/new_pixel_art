@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.77
+// Version: 2.9.78
 
-const VERSION = '2.9.77';
+const VERSION = '2.9.78';
 
 // Global state
 let originalImage = null;
@@ -2050,18 +2050,17 @@ function applyPatternToRegion(colorIndex, patternData) {
     const tempCtx = tempCanvas.getContext('2d');
     tempCtx.imageSmoothingEnabled = false;
     
-    // Draw the pattern tiled across the canvas
+    // Draw the pattern tiled across the canvas using createPattern for seamless tiling
     const patternImg = patternData.img;
     const patternWidth = patternImg.width;
     const patternHeight = patternImg.height;
     
     console.log('Pattern dimensions:', patternWidth, patternHeight);
     
-    for (let y = 0; y < height; y += patternHeight) {
-        for (let x = 0; x < width; x += patternWidth) {
-            tempCtx.drawImage(patternImg, x, y);
-        }
-    }
+    // Use createPattern for seamless tiling
+    const pattern = tempCtx.createPattern(patternImg, 'repeat');
+    tempCtx.fillStyle = pattern;
+    tempCtx.fillRect(0, 0, width, height);
     
     // Get the pattern image data
     const patternImageData = tempCtx.getImageData(0, 0, width, height);
