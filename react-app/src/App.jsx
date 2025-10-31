@@ -143,6 +143,28 @@ export default function App(){
             </div>
           </div>
 
+          <div id="pattern-panel" className="control-section pattern-panel">
+            <h4 className="section-title">Pattern</h4>
+            <div id="pattern-drop-zone" className="pattern-drop-zone">
+              <div className="pattern-drop-content">
+                <svg className="pattern-upload-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <p>Drag & Drop Pattern Image</p>
+                <label htmlFor="pattern-upload" className="pattern-browse-button">
+                  Browse
+                  <input type="file" id="pattern-upload" accept="image/*" hidden />
+                </label>
+              </div>
+            </div>
+            <div id="pattern-display" className="pattern-display" style={{display:'none'}}>
+              <img id="pattern-image" className="pattern-image" alt="Pattern" />
+              <button id="pattern-clear-btn" className="pattern-clear-btn" title="Clear pattern">×</button>
+            </div>
+          </div>
+
           <div id="k-info" className="control-section k-info-panel" style={{display:'none'}}>
             <h3 className="section-title">Color Reduction Analysis (K = <span id="current-k">10</span>)</h3>
             <div className="pros-cons-container">

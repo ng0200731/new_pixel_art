@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.50
+// Version: 2.9.52
 
-const VERSION = '2.9.50';
+const VERSION = '2.9.52';
 
 // Global state
 let originalImage = null;
@@ -25,6 +25,7 @@ let lastMouseY = 0;
 let replaceMode = false; // whether we are selecting colors to replace
 let replaceSourceIndex = null; // first chosen color (to be replaced)
 let replacedColors = new Set(); // palette indices marked as replaced (show red strip)
+let patternImage = null; // Pattern image loaded by user
 
 // DOM elements
 const elements = {
@@ -72,7 +73,12 @@ const elements = {
     ignoreColorBtn: document.getElementById('ignore-color-btn'),
     adjacentInstructions: document.getElementById('adjacent-instructions'),
     ignoreChips: document.getElementById('ignore-chips'),
-    replaceSurroundBtn: document.getElementById('replace-surround-btn')
+    replaceSurroundBtn: document.getElementById('replace-surround-btn'),
+    patternUpload: document.getElementById('pattern-upload'),
+    patternDropZone: document.getElementById('pattern-drop-zone'),
+    patternDisplay: document.getElementById('pattern-display'),
+    patternImage: document.getElementById('pattern-image'),
+    patternClearBtn: document.getElementById('pattern-clear-btn')
 };
 
 // Initialize event listeners
@@ -219,6 +225,22 @@ function initializeEventListeners() {
             }
         }
     });
+    
+    // Pattern upload
+    elements.patternUpload && elements.patternUpload.addEventListener('change', handlePatternFileSelect);
+    
+    // Pattern drag and drop
+    if (elements.patternDropZone) {
+        elements.patternDropZone.addEventListener('dragover', handlePatternDragOver);
+        elements.patternDropZone.addEventListener('dragleave', handlePatternDragLeave);
+        elements.patternDropZone.addEventListener('drop', handlePatternDrop);
+        elements.patternDropZone.addEventListener('click', () => {
+            elements.patternUpload && elements.patternUpload.click();
+        });
+    }
+    
+    // Pattern clear button
+    elements.patternClearBtn && elements.patternClearBtn.addEventListener('click', clearPattern);
 }
 
 // Helper: find centroid index by hex
@@ -985,6 +1007,80 @@ function handleDrop(e) {
     }
 }
 function handleFileSelect(e) { const file = e.target.files[0]; if (file) { processImageFile(file); } }
+
+// Pattern upload handlers
+function handlePatternDragOver(e) {
+    e.preventDefault(); 
+    e.stopPropagation(); 
+    elements.patternDropZone && elements.patternDropZone.classList.add('dragover');
+}
+
+function handlePatternDragLeave(e) {
+    e.preventDefault(); 
+    e.stopPropagation(); 
+    elements.patternDropZone && elements.patternDropZone.classList.remove('dragover');
+}
+
+function handlePatternDrop(e) {
+    e.preventDefault(); 
+    e.stopPropagation(); 
+    elements.patternDropZone && elements.patternDropZone.classList.remove('dragover');
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        const file = files[0];
+        if (file.type.startsWith('image/')) { 
+            processPatternFile(file); 
+        } else { 
+            alert('Please drop an image file'); 
+        }
+    }
+}
+
+function handlePatternFileSelect(e) { 
+    const file = e.target.files[0]; 
+    if (file) { 
+        processPatternFile(file); 
+    } 
+}
+
+function processPatternFile(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        patternImage = new Image();
+        patternImage.onload = function() {
+            // Display the pattern image
+            if (elements.patternImage) {
+                elements.patternImage.src = e.target.result;
+            }
+            if (elements.patternDropZone) {
+                elements.patternDropZone.style.display = 'none';
+            }
+            if (elements.patternDisplay) {
+                elements.patternDisplay.style.display = 'block';
+            }
+        };
+        patternImage.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function clearPattern(e) {
+    e.stopPropagation(); // Prevent triggering the drop zone click
+    patternImage = null;
+    if (elements.patternImage) {
+        elements.patternImage.src = '';
+    }
+    if (elements.patternDropZone) {
+        elements.patternDropZone.style.display = 'block';
+    }
+    if (elements.patternDisplay) {
+        elements.patternDisplay.style.display = 'none';
+    }
+    // Reset the file input
+    if (elements.patternUpload) {
+        elements.patternUpload.value = '';
+    }
+}
 
 // Process uploaded image file
 function processImageFile(file) {

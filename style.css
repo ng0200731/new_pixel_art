@@ -13,6 +13,111 @@
     color: var(--text-secondary);
     font-size: 0.85rem;
 }
+
+/* Pattern drop zone */
+.pattern-drop-zone {
+    position: relative;
+    width: 100%;
+    min-height: 200px;
+    aspect-ratio: 1;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    background: #f9fafb;
+    transition: all 0.3s;
+    cursor: pointer;
+}
+
+.pattern-drop-zone:hover {
+    border-color: var(--primary-color);
+    background: #f1f5f9;
+}
+
+.pattern-drop-zone.dragover {
+    border-color: var(--primary-color);
+    background: #e0f2fe;
+    transform: scale(1.02);
+}
+
+.pattern-drop-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: 100%;
+    padding: 20px;
+}
+
+.pattern-upload-icon {
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.pattern-drop-content p {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+}
+
+.pattern-browse-button {
+    display: inline-block;
+    padding: 6px 16px;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.pattern-browse-button:hover {
+    background: #1d4ed8;
+    transform: translateY(-1px);
+}
+
+/* Pattern display */
+.pattern-display {
+    position: relative;
+    width: 100%;
+    min-height: 200px;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #f9fafb;
+    border: 2px solid var(--border);
+}
+
+.pattern-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.pattern-clear-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.9);
+    color: white;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 300;
+}
+
+.pattern-clear-btn:hover {
+    background: rgba(220, 38, 38, 1);
+    transform: scale(1.1);
+}
 .adjacent-mirror { 
     display: flex; 
     flex-direction: column; 
