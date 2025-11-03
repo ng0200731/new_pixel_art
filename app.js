@@ -1785,7 +1785,8 @@ function processPatternFile(file) {
             const patternData = {
                 id: Date.now() + Math.random(), // unique ID
                 src: e.target.result,
-                img: img
+                img: img,
+                rotation: 0 // Initialize rotation to 0 degrees
             };
             patternImages.push(patternData);
             
@@ -1805,6 +1806,11 @@ function processPatternFile(file) {
 function addPatternToList(patternData) {
     if (!elements.patternList) return;
     
+    // Initialize rotation if not set
+    if (patternData.rotation === undefined) {
+        patternData.rotation = 0;
+    }
+    
     // Create pattern item
     const item = document.createElement('div');
     item.className = 'pattern-item';
@@ -1815,6 +1821,7 @@ function addPatternToList(patternData) {
     img.src = patternData.src;
     img.alt = 'Pattern';
     img.draggable = true; // Make image draggable
+    img.className = 'pattern-item-image';
     
     // Drag event handlers
     img.addEventListener('dragstart', (e) => {
@@ -1829,6 +1836,40 @@ function addPatternToList(patternData) {
         draggedPattern = null;
     });
     
+    // Create rotation controls container
+    const rotateControls = document.createElement('div');
+    rotateControls.className = 'pattern-rotate-controls';
+    
+    // Rotate counter-clockwise button (-45°)
+    const rotateCCWBtn = document.createElement('button');
+    rotateCCWBtn.className = 'pattern-rotate-btn';
+    rotateCCWBtn.innerHTML = '↺ -45°';
+    rotateCCWBtn.title = 'Rotate counter-clockwise by 45°';
+    rotateCCWBtn.onclick = (e) => {
+        e.stopPropagation();
+        rotatePattern(patternData.id, -45);
+    };
+    
+    // Rotate clockwise button (+45°)
+    const rotateCWBtn = document.createElement('button');
+    rotateCWBtn.className = 'pattern-rotate-btn';
+    rotateCWBtn.innerHTML = '↻ +45°';
+    rotateCWBtn.title = 'Rotate clockwise by 45°';
+    rotateCWBtn.onclick = (e) => {
+        e.stopPropagation();
+        rotatePattern(patternData.id, 45);
+    };
+    
+    // Rotation indicator
+    const rotateIndicator = document.createElement('div');
+    rotateIndicator.className = 'pattern-rotate-indicator';
+    rotateIndicator.textContent = `${patternData.rotation}°`;
+    rotateIndicator.dataset.indicatorFor = patternData.id;
+    
+    rotateControls.appendChild(rotateCCWBtn);
+    rotateControls.appendChild(rotateIndicator);
+    rotateControls.appendChild(rotateCWBtn);
+    
     // Create clear button
     const clearBtn = document.createElement('button');
     clearBtn.className = 'pattern-item-clear';
@@ -1840,8 +1881,30 @@ function addPatternToList(patternData) {
     };
     
     item.appendChild(img);
+    item.appendChild(rotateControls);
     item.appendChild(clearBtn);
     elements.patternList.appendChild(item);
+}
+
+function rotatePattern(patternId, degrees) {
+    // Find pattern in array
+    const pattern = patternImages.find(p => p.id === patternId);
+    if (!pattern) return;
+    
+    // Update rotation (normalize to 0-360 range)
+    pattern.rotation = (pattern.rotation + degrees + 360) % 360;
+    
+    // Update rotation indicator in UI
+    const indicator = document.querySelector(`[data-indicator-for="${patternId}"]`);
+    if (indicator) {
+        indicator.textContent = `${pattern.rotation}°`;
+    }
+    
+    // Re-apply pattern to all colors using it
+    if (quantizedResult) {
+        // Redraw quantized canvas with updated rotation
+        redrawQuantizedCanvas();
+    }
 }
 
 function removePattern(patternId) {
@@ -2054,13 +2117,46 @@ function applyPatternToRegion(colorIndex, patternData) {
     const patternImg = patternData.img;
     const patternWidth = patternImg.width;
     const patternHeight = patternImg.height;
+    const rotation = patternData.rotation || 0;
     
-    console.log('Pattern dimensions:', patternWidth, patternHeight);
+    console.log('Pattern dimensions:', patternWidth, patternHeight, 'rotation:', rotation);
     
-    // Use createPattern for seamless tiling
-    const pattern = tempCtx.createPattern(patternImg, 'repeat');
-    tempCtx.fillStyle = pattern;
-    tempCtx.fillRect(0, 0, width, height);
+    // For seamless tiling with rotation, we need to tile on a larger canvas first
+    if (rotation !== 0) {
+        const rad = (rotation * Math.PI) / 180;
+        
+        // Create a larger canvas (2x size) to avoid edge artifacts after rotation
+        const largeCanvas = document.createElement('canvas');
+        const extraSize = Math.max(width, height);
+        largeCanvas.width = width + extraSize * 2;
+        largeCanvas.height = height + extraSize * 2;
+        const largeCtx = largeCanvas.getContext('2d');
+        largeCtx.imageSmoothingEnabled = false;
+        
+        // Fill large canvas with tiled pattern
+        const pattern = largeCtx.createPattern(patternImg, 'repeat');
+        largeCtx.fillStyle = pattern;
+        largeCtx.fillRect(0, 0, largeCanvas.width, largeCanvas.height);
+        
+        // Now rotate the entire tiled canvas
+        tempCtx.save();
+        tempCtx.translate(width / 2, height / 2);
+        tempCtx.rotate(rad);
+        
+        // Draw the rotated tiled pattern, centered
+        tempCtx.drawImage(
+            largeCanvas,
+            -largeCanvas.width / 2 + width / 2,
+            -largeCanvas.height / 2 + height / 2
+        );
+        
+        tempCtx.restore();
+    } else {
+        // No rotation - standard seamless tiling
+        const pattern = tempCtx.createPattern(patternImg, 'repeat');
+        tempCtx.fillStyle = pattern;
+        tempCtx.fillRect(0, 0, width, height);
+    }
     
     // Get the pattern image data
     const patternImageData = tempCtx.getImageData(0, 0, width, height);
