@@ -1900,10 +1900,15 @@ function rotatePattern(patternId, degrees) {
         indicator.textContent = `${pattern.rotation}°`;
     }
     
-    // Re-apply pattern to all colors using it
-    if (quantizedResult) {
-        // Redraw quantized canvas with updated rotation
-        redrawQuantizedCanvas();
+    // Re-apply this pattern to all colors currently using it
+    if (quantizedResult && patternOverlays) {
+        // Find all color regions using this pattern and re-apply
+        patternOverlays.forEach((overlay, colorIndex) => {
+            if (overlay.patternData && overlay.patternData.id === patternId) {
+                // Re-apply the pattern with new rotation
+                applyPatternToRegion(colorIndex, pattern);
+            }
+        });
     }
 }
 
