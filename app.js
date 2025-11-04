@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.82
+// Version: 2.9.86
 
-const VERSION = '2.9.82';
+const VERSION = '2.9.86';
 
 // Global state
 let originalImage = null;
@@ -43,6 +43,7 @@ let patternImages = []; // Array of pattern images loaded by user
 let draggedPattern = null; // Currently dragged pattern
 let patternOverlayCanvas = null; // Canvas for pattern hover preview
 let hoveredColorIndex = -1; // Color region being hovered during pattern drag
+let patternFlashInterval = null; // Interval ID for continuous flashing animation
 let patternOverlays = new Map(); // Map<colorIndex, {patternData, canvas}> for applied patterns
 
 function showKeyPopup(label){
@@ -1913,16 +1914,86 @@ function rotatePattern(patternId, degrees) {
 }
 
 function removePattern(patternId) {
-    // Remove from array
-    patternImages = patternImages.filter(p => p.id !== patternId);
-    
-    // Remove from DOM
-    if (elements.patternList) {
-        const item = elements.patternList.querySelector(`[data-pattern-id="${patternId}"]`);
-        if (item) {
-            item.remove();
+    const pattern = patternImages.find(p => p.id === patternId);
+    if (!pattern) return;
+
+    // Check if this pattern is currently applied to any color regions
+    let isApplied = false;
+    const appliedColors = [];
+    if (patternOverlays) {
+        patternOverlays.forEach((overlay, colorIndex) => {
+            if (overlay.patternData && overlay.patternData.id === patternId) {
+                isApplied = true;
+                appliedColors.push(colorIndex);
+            }
+        });
+    }
+
+    // Show confirmation dialog
+    let confirmMessage = '';
+    if (isApplied) {
+        // Pattern IS applied in pixel image
+        confirmMessage = `⚠️ This pattern is currently applied to ${appliedColors.length} color region(s) in your pixel artwork.\n\n` +
+                        `Clicking OK will:\n` +
+                        `• Remove the pattern effect from the pixel canvas\n` +
+                        `• Restore those regions to solid colors\n` +
+                        `• Keep the pattern in your library (right menu)\n\n` +
+                        `Do you want to continue?`;
+    } else {
+        // Pattern is NOT applied in pixel image
+        confirmMessage = `Are you sure you want to delete this pattern from your library?\n\n` +
+                        `This action cannot be undone.`;
+    }
+
+    if (!confirm(confirmMessage)) {
+        return; // User cancelled
+    }
+
+    if (isApplied) {
+        // Pattern IS applied: ONLY remove from pixel image, KEEP in library
+        if (quantizedResult) {
+            appliedColors.forEach(colorIndex => {
+                patternOverlays.delete(colorIndex);
+                restoreSolidColor(colorIndex);
+            });
+        }
+        // DO NOT remove from patternImages array or DOM
+    } else {
+        // Pattern is NOT applied: Remove from library (right menu)
+        patternImages = patternImages.filter(p => p.id !== patternId);
+        
+        if (elements.patternList) {
+            const item = elements.patternList.querySelector(`[data-pattern-id="${patternId}"]`);
+            if (item) {
+                item.remove();
+            }
         }
     }
+}
+
+// Restore solid color to a color region (remove pattern)
+function restoreSolidColor(colorIndex) {
+    if (!quantizedResult || !currentImageData) return;
+
+    const ctx = elements.quantizedCanvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, elements.quantizedCanvas.width, elements.quantizedCanvas.height);
+    const data = imageData.data;
+
+    const color = quantizedResult.centroids[colorIndex];
+    if (!color) return;
+
+    // Restore all pixels of this color to solid color
+    for (let i = 0; i < quantizedResult.assignments.length; i++) {
+        if (quantizedResult.assignments[i] === colorIndex) {
+            const pixelIdx = i * 4;
+            data[pixelIdx] = color[0];     // R
+            data[pixelIdx + 1] = color[1]; // G
+            data[pixelIdx + 2] = color[2]; // B
+            data[pixelIdx + 3] = 255;      // A
+        }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
 }
 
 // Pattern drag over canvas - show pink flashing border on hovered color region
@@ -1930,7 +2001,10 @@ function handlePatternDragOverCanvas(e) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     
-    if (!draggedPattern || !quantizedResult) return;
+    if (!draggedPattern || !quantizedResult) {
+        console.log('[Pattern Hover] No dragged pattern or result');
+        return;
+    }
     
     // Get pixel coordinates
     const rect = elements.quantizedCanvas.getBoundingClientRect();
@@ -1948,6 +2022,7 @@ function handlePatternDragOverCanvas(e) {
     
     // If hovering over a different color region, update the effect
     if (colorIdx !== hoveredColorIndex) {
+        console.log('[Pattern Hover] Color changed from', hoveredColorIndex, 'to', colorIdx);
         hoveredColorIndex = colorIdx;
         showPatternHoverEffect(colorIdx);
     }
@@ -2025,7 +2100,7 @@ function showPatternHoverEffect(colorIndex) {
     drawPatternHoverBorder(colorIndex);
 }
 
-// Draw pink flashing border around color region
+// Draw pink flashing highlight over entire color region
 function drawPatternHoverBorder(colorIndex) {
     if (!patternOverlayCanvas || !quantizedResult) return;
     
@@ -2035,59 +2110,65 @@ function drawPatternHoverBorder(colorIndex) {
     const width = elements.quantizedCanvas.width;
     const height = elements.quantizedCanvas.height;
     
-    // Create image data for the border
+    // Create image data for the highlight overlay
     const imageData = ctx.createImageData(width, height);
     const data = imageData.data;
     
-    // Find edges of the color region
+    // Fill entire color region with semi-transparent pink
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             const idx = y * width + x;
             
             if (quantizedResult.assignments[idx] === colorIndex) {
-                // Check if this pixel is on the edge
-                const isEdge = (
-                    x === 0 || x === width - 1 ||
-                    y === 0 || y === height - 1 ||
-                    (x > 0 && quantizedResult.assignments[idx - 1] !== colorIndex) ||
-                    (x < width - 1 && quantizedResult.assignments[idx + 1] !== colorIndex) ||
-                    (y > 0 && quantizedResult.assignments[idx - width] !== colorIndex) ||
-                    (y < height - 1 && quantizedResult.assignments[idx + width] !== colorIndex)
-                );
-                
-                if (isEdge) {
-                    const pixelIdx = idx * 4;
-                    data[pixelIdx] = 255;     // R - Pink
-                    data[pixelIdx + 1] = 105; // G
-                    data[pixelIdx + 2] = 180; // B
-                    data[pixelIdx + 3] = 255; // A - Full opacity
-                }
+                const pixelIdx = idx * 4;
+                data[pixelIdx] = 255;     // R - Pink
+                data[pixelIdx + 1] = 105; // G
+                data[pixelIdx + 2] = 180; // B
+                data[pixelIdx + 3] = 128; // A - Semi-transparent (50%)
             }
         }
     }
     
     ctx.putImageData(imageData, 0, 0);
     
-    // Add flashing animation
+    console.log('[Pattern Hover] Starting flashing animation for color', colorIndex);
+    
+    // Clear any existing flash interval
+    if (patternFlashInterval) {
+        clearInterval(patternFlashInterval);
+        patternFlashInterval = null;
+    }
+    
+    // Set initial opacity
+    patternOverlayCanvas.style.opacity = '1';
+    
+    // Add continuous flashing animation
     let flashCount = 0;
-    const flashInterval = setInterval(() => {
+    patternFlashInterval = setInterval(() => {
         if (!patternOverlayCanvas || hoveredColorIndex !== colorIndex) {
-            clearInterval(flashInterval);
+            console.log('[Pattern Hover] Stopping flash - canvas or colorIndex changed');
+            clearInterval(patternFlashInterval);
+            patternFlashInterval = null;
             return;
         }
         
-        patternOverlayCanvas.style.opacity = flashCount % 2 === 0 ? '1' : '0.5';
+        // Alternate between full visibility and hidden
+        const newOpacity = flashCount % 2 === 0 ? '0' : '1';
+        patternOverlayCanvas.style.opacity = newOpacity;
+        console.log('[Pattern Hover] Flash', flashCount, '- opacity:', newOpacity);
         flashCount++;
-        
-        if (flashCount > 10) {
-            clearInterval(flashInterval);
-        }
-    }, 200);
+    }, 400); // Flash every 400ms (slower, more visible)
 }
 
 // Clear pattern hover effect
 function clearPatternHoverEffect() {
     hoveredColorIndex = -1;
+    
+    // Clear flashing interval
+    if (patternFlashInterval) {
+        clearInterval(patternFlashInterval);
+        patternFlashInterval = null;
+    }
     
     if (patternOverlayCanvas) {
         const ctx = patternOverlayCanvas.getContext('2d');
