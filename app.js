@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.78
+// Version: 2.9.82
 
-const VERSION = '2.9.78';
+const VERSION = '2.9.82';
 
 // Global state
 let originalImage = null;
@@ -2005,12 +2005,18 @@ function showPatternHoverEffect(colorIndex) {
         patternOverlayCanvas.width = elements.quantizedCanvas.width;
         patternOverlayCanvas.height = elements.quantizedCanvas.height;
         patternOverlayCanvas.style.position = 'absolute';
-        patternOverlayCanvas.style.top = '0';
-        patternOverlayCanvas.style.left = '0';
         patternOverlayCanvas.style.pointerEvents = 'none';
         patternOverlayCanvas.style.imageRendering = 'pixelated';
-        patternOverlayCanvas.style.width = '100%';
-        patternOverlayCanvas.style.height = '100%';
+        
+        // Match the exact position and size of the quantized canvas
+        const canvasRect = elements.quantizedCanvas.getBoundingClientRect();
+        const parentRect = elements.quantizedCanvas.parentElement.getBoundingClientRect();
+        
+        patternOverlayCanvas.style.top = (canvasRect.top - parentRect.top) + 'px';
+        patternOverlayCanvas.style.left = (canvasRect.left - parentRect.left) + 'px';
+        patternOverlayCanvas.style.width = canvasRect.width + 'px';
+        patternOverlayCanvas.style.height = canvasRect.height + 'px';
+        
         elements.quantizedCanvas.parentElement.style.position = 'relative';
         elements.quantizedCanvas.parentElement.appendChild(patternOverlayCanvas);
     }
