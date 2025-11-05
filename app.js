@@ -1,7 +1,10 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.88
+// Version: 2.9.90
 
-const VERSION = '2.9.88';
+const VERSION = '2.9.90';
+
+// API Configuration
+const API_BASE_URL = 'http://localhost:3000/api';
 
 // Global state
 let originalImage = null;
@@ -405,6 +408,131 @@ function initializeCollapsibleSections() {
                 section.classList.toggle('collapsed');
             }
         });
+    });
+}
+
+// =============================================================================
+// Pattern API Functions
+// =============================================================================
+
+// Load all patterns from database
+async function loadPatternsFromDatabase() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/patterns`);
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log(`Loaded ${data.count} patterns from database`);
+            
+            // Convert database format to app format
+            patternImages = data.patterns.map(p => ({
+                id: p.id,
+                name: p.name,
+                dataURL: p.image_data,
+                width: p.width,
+                height: p.height,
+                rotation: p.rotation || 0
+            }));
+            
+            // Re-render pattern list
+            renderPatternList();
+        } else {
+            console.error('Failed to load patterns:', data.error);
+        }
+    } catch (error) {
+        console.error('Error loading patterns from database:', error);
+        console.warn('Running in offline mode - patterns will be stored in memory only');
+    }
+}
+
+// Save pattern to database
+async function savePatternToDatabase(patternData) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/patterns`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: patternData.name,
+                image_data: patternData.dataURL,
+                width: patternData.width,
+                height: patternData.height,
+                rotation: patternData.rotation || 0
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('Pattern saved to database:', data.pattern.id);
+            return data.pattern.id; // Return database ID
+        } else {
+            console.error('Failed to save pattern:', data.error);
+            return null;
+        }
+    } catch (error) {
+        console.error('Error saving pattern to database:', error);
+        return null;
+    }
+}
+
+// Update pattern rotation in database
+async function updatePatternRotation(patternId, rotation) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/patterns/${patternId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ rotation })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('Pattern rotation updated in database');
+            return true;
+        } else {
+            console.error('Failed to update pattern:', data.error);
+            return false;
+        }
+    } catch (error) {
+        console.error('Error updating pattern in database:', error);
+        return false;
+    }
+}
+
+// Delete pattern from database
+async function deletePatternFromDatabase(patternId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/patterns/${patternId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('Pattern deleted from database');
+            return true;
+        } else {
+            console.error('Failed to delete pattern:', data.error);
+            return false;
+        }
+    } catch (error) {
+        console.error('Error deleting pattern from database:', error);
+        return false;
+    }
+}
+
+// Render pattern list from patternImages array
+function renderPatternList() {
+    if (!elements.patternList) return;
+    
+    elements.patternList.innerHTML = '';
+    
+    patternImages.forEach(pattern => {
+        addPatternToList(pattern);
     });
 }
 
@@ -1797,18 +1925,33 @@ function handlePatternFileSelect(e) {
     } 
 }
 
-function processPatternFile(file) {
+async function processPatternFile(file) {
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = async function(e) {
         const img = new Image();
-        img.onload = function() {
-            // Add to pattern images array
+        img.onload = async function() {
+            // Prepare pattern data
             const patternData = {
-                id: Date.now() + Math.random(), // unique ID
-                src: e.target.result,
-                img: img,
-                rotation: 0 // Initialize rotation to 0 degrees
+                name: file.name,
+                dataURL: e.target.result,
+                width: img.width,
+                height: img.height,
+                rotation: 0
             };
+            
+            // Save to database
+            const dbId = await savePatternToDatabase(patternData);
+            
+            if (dbId) {
+                // Update with database ID
+                patternData.id = dbId;
+            } else {
+                // Fallback to temp ID if database save fails
+                patternData.id = Date.now() + Math.random();
+                console.warn('Pattern saved locally only (database unavailable)');
+            }
+            
+            // Add to local array
             patternImages.push(patternData);
             
             // Display the pattern
@@ -1839,8 +1982,8 @@ function addPatternToList(patternData) {
     
     // Create image
     const img = document.createElement('img');
-    img.src = patternData.src;
-    img.alt = 'Pattern';
+    img.src = patternData.dataURL || patternData.src; // Support both new and old format
+    img.alt = patternData.name || 'Pattern';
     img.draggable = true; // Make image draggable
     img.className = 'pattern-item-image';
     
@@ -1907,7 +2050,7 @@ function addPatternToList(patternData) {
     elements.patternList.appendChild(item);
 }
 
-function rotatePattern(patternId, degrees) {
+async function rotatePattern(patternId, degrees) {
     // Find pattern in array
     const pattern = patternImages.find(p => p.id === patternId);
     if (!pattern) return;
@@ -1921,6 +2064,9 @@ function rotatePattern(patternId, degrees) {
         indicator.textContent = `${pattern.rotation}°`;
     }
     
+    // Save to database
+    await updatePatternRotation(patternId, pattern.rotation);
+    
     // Re-apply this pattern to all colors currently using it
     if (quantizedResult && patternOverlays) {
         // Find all color regions using this pattern and re-apply
@@ -1933,7 +2079,7 @@ function rotatePattern(patternId, degrees) {
     }
 }
 
-function removePattern(patternId) {
+async function removePattern(patternId) {
     const pattern = patternImages.find(p => p.id === patternId);
     if (!pattern) return;
 
@@ -1988,6 +2134,9 @@ function removePattern(patternId) {
                 item.remove();
             }
         }
+        
+        // Delete from database
+        await deletePatternFromDatabase(patternId);
     }
 }
 
@@ -2225,10 +2374,24 @@ function applyPatternToRegion(colorIndex, patternData) {
     const tempCtx = tempCanvas.getContext('2d');
     tempCtx.imageSmoothingEnabled = false;
     
-    // Draw the pattern tiled across the canvas using createPattern for seamless tiling
-    const patternImg = patternData.img;
-    const patternWidth = patternImg.width;
-    const patternHeight = patternImg.height;
+    // Get pattern image (support both old img format and new dataURL format)
+    let patternImg;
+    if (patternData.img) {
+        // Old format: already has Image object
+        patternImg = patternData.img;
+    } else if (patternData.dataURL) {
+        // New format: create Image from dataURL
+        patternImg = new Image();
+        patternImg.src = patternData.dataURL;
+        // Cache it for future use
+        patternData.img = patternImg;
+    } else {
+        console.error('Pattern has no image data');
+        return;
+    }
+    
+    const patternWidth = patternImg.width || patternData.width;
+    const patternHeight = patternImg.height || patternData.height;
     const rotation = patternData.rotation || 0;
     
     console.log('Pattern dimensions:', patternWidth, patternHeight, 'rotation:', rotation);
@@ -2938,13 +3101,16 @@ function displayColorPalette(colors, stats, originalIndices) {
         elements.paletteRows.appendChild(row);
     });
 
-    // Render Adjacent mirror: active colors only (count > 0 and not replaced), same order
+    // Render Adjacent mirror: show all colors including those with 0 pixels (after replacement)
     if (elements.adjacentTargetOptions) {
         elements.adjacentTargetOptions.innerHTML = '';
         let adjacentCount = 0;
         sortedData.forEach(item => {
-            const isActive = item.count > 0 && !replacedColors.has(item.originalIndex);
-            if (!isActive) return;
+            // Skip only if color was manually replaced (not from adjacent replacement)
+            // Show colors with 0 pixels if they were modified by adjacent replacement
+            if (replacedColors.has(item.originalIndex) && !adjacentReplacedColors.has(item.originalIndex)) {
+                return;
+            }
             adjacentCount++;
             const sw = document.createElement('div');
             sw.className = 'adjacent-swatch';
@@ -3062,13 +3228,16 @@ function displayColorPalette(colors, stats, originalIndices) {
         }
     }
     
-    // Render Adjacent Multi mirror: exact duplicate of single color for now
+    // Render Adjacent Multi mirror: show all colors including those with 0 pixels (after replacement)
     if (elements.adjacentMultiTargetOptions) {
         elements.adjacentMultiTargetOptions.innerHTML = '';
         let adjacentMultiCount = 0;
         sortedData.forEach(item => {
-            const isActive = item.count > 0 && !replacedColors.has(item.originalIndex);
-            if (!isActive) return;
+            // Skip only if color was manually replaced (not from adjacent replacement)
+            // Show colors with 0 pixels if they were modified by adjacent replacement
+            if (replacedColors.has(item.originalIndex) && !adjacentReplacedColors.has(item.originalIndex)) {
+                return;
+            }
             adjacentMultiCount++;
             const sw = document.createElement('div');
             sw.className = 'adjacent-swatch';
@@ -3473,10 +3642,13 @@ function downloadPixelBmp() {
 }
 
 // Initialize application
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     console.log(`Broadloom Image Converter v${VERSION} initialized`);
     initializeEventListeners();
     updateKInfo();
+    
+    // Load patterns from database
+    await loadPatternsFromDatabase();
     
     // Set initial button states
     elements.kMinus.disabled = currentK <= 2;

@@ -1252,8 +1252,9 @@ function displayColorPalette(colors, stats, originalIndices) {
         elements.adjacentTargetOptions.innerHTML = '';
         let adjacentCount = 0;
         sortedData.forEach(item => {
-            const isActive = item.count > 0 && !replacedColors.has(item.originalIndex);
-            if (!isActive) return; adjacentCount++;
+            // Show all colors including 0 pixels (user needs to see and reset them)
+            if (replacedColors.has(item.originalIndex)) return;
+            adjacentCount++;
             const sw = document.createElement('div'); sw.className = 'adjacent-swatch'; const hex = rgbToHex(item.color); sw.style.background = hex; sw.setAttribute('data-hex', hex); sw.title = `${hex} • ${item.count.toLocaleString()} px`; elements.adjacentTargetOptions.appendChild(sw);
         });
         if (elements.adjacentPanel) { const titleEl = elements.adjacentPanel.querySelector('h4.section-title'); if (titleEl) { const label = adjacentCount === 1 ? 'color' : 'colors'; titleEl.textContent = `Adjacent (${adjacentCount} ${label})`; } }
