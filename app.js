@@ -1,7 +1,7 @@
 // Main application logic for Broadloom Image Converter  
-// Version: 2.9.86
+// Version: 2.9.88
 
-const VERSION = '2.9.86';
+const VERSION = '2.9.88';
 
 // Global state
 let originalImage = null;
@@ -386,6 +386,26 @@ function initializeEventListeners() {
         });
     }
 
+    // Collapsible sections
+    initializeCollapsibleSections();
+
+}
+
+// Initialize collapsible sections
+function initializeCollapsibleSections() {
+    const sections = document.querySelectorAll('.collapsible-section .section-header');
+    
+    sections.forEach(header => {
+        header.addEventListener('click', (e) => {
+            // Don't toggle if clicking on buttons inside header
+            if (e.target.closest('button')) return;
+            
+            const section = header.closest('.collapsible-section');
+            if (section) {
+                section.classList.toggle('collapsed');
+            }
+        });
+    });
 }
 
 // Helper: find centroid index by hex

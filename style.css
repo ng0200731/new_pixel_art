@@ -463,12 +463,63 @@ header h1 {
     box-shadow: var(--shadow);
 }
 
+/* Collapsible Section Styles */
+.collapsible-section .section-header {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 12px;
+}
+
+.collapsible-section .section-header:hover .collapse-icon {
+    color: var(--primary-color);
+}
+
+.collapse-icon {
+    font-size: 0.9rem;
+    margin-right: 8px;
+    transition: transform 0.3s ease, color 0.3s ease;
+    color: var(--text-secondary);
+    min-width: 16px;
+}
+
+.collapsible-section.collapsed .collapse-icon {
+    transform: rotate(-90deg);
+}
+
+.collapsible-section .section-content {
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    max-height: 2000px;
+    opacity: 1;
+}
+
+.collapsible-section.collapsed .section-content {
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    padding: 0;
+}
+
+.collapsible-section .section-header .palette-header {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0;
+}
+
 .section-title {
     display: block;
     font-weight: 600;
     margin-bottom: 12px;
     color: var(--text-primary);
     font-size: 0.95rem;
+}
+
+.collapsible-section .section-header .section-title {
+    margin-bottom: 0;
 }
 
 /* Resolution Options */

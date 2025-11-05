@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <h1>Broadloom Image to Yarn Converter</h1>
-            <div class="version">Version: 2.9.86</div>
+            <div class="version">Version: 2.9.88</div>
         </header>
 
         <div class="main-content">
@@ -64,8 +64,12 @@
             <!-- Right Panel - Controls -->
             <div class="controls-panel">
 
-                <div class="control-section">
-                    <label class="section-title">Resolution:</label>
+                <div class="control-section collapsible-section collapsed">
+                    <div class="section-header" data-section="resolution">
+                        <span class="collapse-icon">▼</span>
+                        <label class="section-title">Resolution:</label>
+                    </div>
+                    <div class="section-content" id="resolution-content">
                     <div class="resolution-options">
                         <label class="radio-option">
                             <input type="radio" name="resolution" value="58" checked>
@@ -85,10 +89,15 @@
                         <input type="checkbox" id="use-actual-colors" name="use-actual-colors" checked>
                         <span class="checkbox-label">Use Actual Colors Only</span>
                     </label>
+                    </div>
                 </div>
 
-                <div class="control-section">
-                    <label class="section-title">Number of Colors (K):</label>
+                <div class="control-section collapsible-section collapsed">
+                    <div class="section-header" data-section="colors-k">
+                        <span class="collapse-icon">▼</span>
+                        <label class="section-title">Number of Colors (K):</label>
+                    </div>
+                    <div class="section-content" id="colors-k-content">
                     <div class="k-controls">
                         <button id="k-minus" class="k-button">−</button>
                         <div class="k-display">
@@ -110,6 +119,7 @@
                         <button id="distance-hsv" class="distance-btn" data-method="hsv">HSV</button>
                         <button id="distance-lab" class="distance-btn" data-method="lab">CIEDE2000</button>
                     </div>
+                    </div>
                 </div>
 
                 <div class="control-section action-buttons">
@@ -122,24 +132,33 @@
                 <div id="image-info" class="control-section info-panel"></div>
                 
                 <!-- Color Palette -->
-                <div id="color-palette" class="control-section color-palette">
-                    <div class="palette-header">
-                        <h4>Color Palette <span id="active-color-count" class="active-color-count"></span></h4>
-                        <div class="sort-buttons">
-                            <button id="sort-brightness" class="sort-btn active" title="Sort by brightness">☀️ %</button>
-                            <button id="sort-pixels" class="sort-btn" title="Sort by pixel count">📊 %</button>
+                <div id="color-palette" class="control-section color-palette collapsible-section collapsed">
+                    <div class="section-header" data-section="color-palette">
+                        <span class="collapse-icon">▼</span>
+                        <div class="palette-header">
+                            <h4>Color Palette <span id="active-color-count" class="active-color-count"></span></h4>
+                            <div class="sort-buttons">
+                                <button id="sort-brightness" class="sort-btn active" title="Sort by brightness">☀️ %</button>
+                                <button id="sort-pixels" class="sort-btn" title="Sort by pixel count">📊 %</button>
+                            </div>
                         </div>
                     </div>
+                    <div class="section-content" id="color-palette-content">
                     <div class="replace-controls">
                         <button id="replace-color-btn" class="sort-btn replace-btn" title="Replace one color with another">Replace Color</button>
                         <div id="replace-instructions" class="replace-instructions" style="display:none;">☀️ %  📊 %  (pls pick the replaced order)</div>
                     </div>
                     <div id="palette-rows" class="palette-rows"></div>
+                    </div>
                 </div>
 
                 <!-- Adjacent - mirror of Color Palette (active colors only) -->
-                <div id="adjacent-panel" class="control-section adjacent-panel">
-                    <h4 class="section-title">Adjacent</h4>
+                <div id="adjacent-panel" class="control-section adjacent-panel collapsible-section collapsed">
+                    <div class="section-header" data-section="adjacent">
+                        <span class="collapse-icon">▼</span>
+                        <h4 class="section-title">Adjacent</h4>
+                    </div>
+                    <div class="section-content" id="adjacent-content">
                     <div id="adjacent-target-options" class="adjacent-mirror"></div>
                     <div class="adjacent-controls">
                         <div style="display: flex; gap: 8px;">
@@ -150,11 +169,16 @@
                         <div id="ignore-chips" class="ignore-chips"></div>
                         <button id="replace-surround-btn" class="sort-btn" disabled>Replace by #1 color surround</button>
                     </div>
+                    </div>
                 </div>
 
                 <!-- Adjacent Multi Color - mirror of Color Palette (active colors only) -->
-                <div id="adjacent-multi-panel" class="control-section adjacent-panel">
-                    <h4 class="section-title">Adjacent Multi</h4>
+                <div id="adjacent-multi-panel" class="control-section adjacent-panel collapsible-section collapsed">
+                    <div class="section-header" data-section="adjacent-multi">
+                        <span class="collapse-icon">▼</span>
+                        <h4 class="section-title">Adjacent Multi</h4>
+                    </div>
+                    <div class="section-content" id="adjacent-multi-content">
                     <div id="adjacent-multi-target-options" class="adjacent-mirror"></div>
                     <div class="adjacent-controls">
                         <div style="display: flex; gap: 8px;">
@@ -165,11 +189,16 @@
                         <div id="ignore-multi-chips" class="ignore-chips"></div>
                         <button id="replace-multi-surround-btn" class="sort-btn" disabled>Replace by #1 color surround</button>
                     </div>
+                    </div>
                 </div>
 
                 <!-- Pattern -->
-                <div id="pattern-panel" class="control-section pattern-panel">
-                    <h4 class="section-title">Pattern</h4>
+                <div id="pattern-panel" class="control-section pattern-panel collapsible-section collapsed">
+                    <div class="section-header" data-section="pattern">
+                        <span class="collapse-icon">▼</span>
+                        <h4 class="section-title">Pattern</h4>
+                    </div>
+                    <div class="section-content" id="pattern-content">
                     <div id="pattern-drop-zone" class="pattern-drop-zone">
                         <div class="pattern-drop-content">
                             <svg class="pattern-upload-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -185,6 +214,7 @@
                         </div>
                     </div>
                     <div id="pattern-list" class="pattern-list"></div>
+                    </div>
                 </div>
                 
                 <!-- Color Reduction Analysis -->
